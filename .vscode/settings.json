@@ -1,0 +1,4 @@
+{
+    "python.defaultInterpreterPath": "D:\\venvs\\crosier_bowker_complaint\\Scripts\\python.exe",
+    "python.envFile": "${workspaceFolder}\\.env"
+}

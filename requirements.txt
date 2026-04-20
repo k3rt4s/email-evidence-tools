@@ -1,0 +1,12 @@
+# ============================================================
+# crosier_bowker_complaint - Python dependencies
+# ============================================================
+#
+# Install into this project's venv:
+#   D:\venvs\crosier_bowker_complaint\Scripts\pip.exe install -r requirements.txt
+#
+# Everything else this project uses is stdlib.
+# ============================================================
+
+pandas>=2.2.2
+python-dotenv>=1.0.0
