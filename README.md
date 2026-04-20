@@ -11,7 +11,7 @@ evidence from email exports (mbox) related to the Crosier Bowker complaint.
 ## Scripts
 
 | Script | Purpose |
-|--------|---------|
+| -------- | --------- |
 | `scan_mbox_for_evidence.py` | Scans an mbox file and extracts emails matching evidence criteria |
 | `label_cr_emails_via_imap.py` | Connects via IMAP and applies labels to matching emails |
 | `strip_attachments_from_mbox.py` | Strips attachments from mbox to reduce file size |
@@ -41,7 +41,7 @@ D:\venvs\ai-toolkit\Scripts\python.exe clean_evidence_csv.py
 
 ## Structure
 
-```
+```text
 crosier_bowker_complaint\
 ├── scan_mbox_for_evidence.py
 ├── label_cr_emails_via_imap.py
