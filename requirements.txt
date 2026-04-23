@@ -1,11 +1,9 @@
 # ============================================================
 # crosier_bowker_complaint - Python dependencies
 # ============================================================
-#
-# Install into this project's venv:
-#   D:\venvs\crosier_bowker_complaint\Scripts\pip.exe install -r requirements.txt
-#
-# Everything else this project uses is stdlib.
+# This project runs in its own isolated venv:
+#   D:\venvs\crosier_bowker_complaint\
+# Its bootstrap loads ONLY this file (not the ai-toolkit master).
 # ============================================================
 
 pandas>=2.2.2
