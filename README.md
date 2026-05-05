@@ -2,7 +2,7 @@
 
 > **AI reviewer - read before editing.** Start at the master `Code/README.md` ("AI Session Rules" section) and any README upstream of this one. It is the single source of truth for venvs, path conventions, archive/backup rules, markdown conventions, and every repo-wide rule - the rules live there so they don't need to be repeated per file.
 
-**Location:** `D:\Proton Drive\My files\Code\projects\crosier_bowker_complaint\`
+**Location:** `C:\Code\projects\crosier_bowker_complaint\`
 **Owner:** k3rt4s
 **Purpose:** Python scripts for processing, analyzing, and labeling legal
 evidence from email exports (mbox) related to the Crosier Bowker complaint.
@@ -24,17 +24,17 @@ evidence from email exports (mbox) related to the Crosier Bowker complaint.
 ## Usage
 
 ```powershell
-D:\venvs\ai-toolkit\Scripts\python.exe scan_mbox_for_evidence.py
-D:\venvs\ai-toolkit\Scripts\python.exe label_cr_emails_via_imap.py
-D:\venvs\ai-toolkit\Scripts\python.exe strip_attachments_from_mbox.py
-D:\venvs\ai-toolkit\Scripts\python.exe clean_evidence_csv.py
+C:\Code\venvs\ai-toolkit\Scripts\python.exe scan_mbox_for_evidence.py
+C:\Code\venvs\ai-toolkit\Scripts\python.exe label_cr_emails_via_imap.py
+C:\Code\venvs\ai-toolkit\Scripts\python.exe strip_attachments_from_mbox.py
+C:\Code\venvs\ai-toolkit\Scripts\python.exe clean_evidence_csv.py
 ```
 
 ---
 
 ## Notes
 
-- Uses shared venv at `D:\venvs\ai-toolkit\`
+- Uses shared venv at `C:\Code\venvs\ai-toolkit\`
 - Credentials (IMAP host, user, password) loaded from `ai-toolkit\.env`
 - Input mbox files are not stored in this repo — reference local paths in script config
 - Output CSVs are gitignored — do not commit evidence data
