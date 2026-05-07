@@ -8,19 +8,17 @@
 # =====================================================================
 
 """
-label_cr_emails_via_imap.py
-============================
-Project : Crosier_Bowker — Legal Evidence Review
-Case    : Tennessee Board of Professional Responsibility, Complaint No. 105302-2026-CAP
-Purpose : Connects to a local ProtonMail Bridge IMAP endpoint and labels all messages
-          that involve Crosier-related email domains under a dedicated IMAP label
-          ("Labels/CR").  This makes the relevant email thread visible as a distinct
-          folder/label inside Proton Mail or any connected IMAP client.
+label_matching_emails_via_imap.py
+=================================
+Project : email-evidence-tools
+Purpose : Connects to an IMAP endpoint and labels messages that involve configured
+          address domains. This makes a related email thread visible as a distinct
+          folder/label inside the mail client.
 
           Two scan modes are available:
             fast  — server-side IMAP SEARCH filters on From/Reply-To/To/Cc headers
-                    containing "@crosier".  Fast but may miss edge cases where the
-                    domain appears only in a Cc or BCC field spelled differently.
+                    containing configured domain fragments. Fast but may miss edge
+                    cases where a domain appears only in unsupported headers.
             full  — downloads and inspects every message in All Mail.  Slower but
                     exhaustive.
 
@@ -29,17 +27,15 @@ Purpose : Connects to a local ProtonMail Bridge IMAP endpoint and labels all mes
           UIDs.
 
 Requirements:
-    - ProtonMail Bridge running locally (default: 127.0.0.1:1143)
+    - IMAP endpoint. Local bridge defaults are supported through environment vars.
     - .env file in the working directory containing:
-          IMAP_USER=<bridge username>
-          IMAP_PASS=<bridge password>
+          IMAP_USER=<username>
+          IMAP_PASS=<password>
+          TARGET_DOMAINS=example.com,example.org
+          TARGET_LABEL=Labels/Evidence
     - python-dotenv  (pip install python-dotenv)
 
-Usage   : python label_cr_emails_via_imap.py
-          → prompts for mode (full / fast) and whether to restart from scratch
-
-Author  : Jonathan David Bowker
-Created : 2025-12-29
+Usage   : python label_matching_emails_via_imap.py --domains "example.com,example.org" --target-label "Labels/Evidence"
 """
 
 # --- auto-deps bootstrap (Code/scripts/_bootstrap.py) ---
@@ -57,6 +53,7 @@ import imaplib
 import email
 import os
 import time
+import argparse
 from dotenv import load_dotenv
 from email.utils import getaddresses
 
@@ -65,29 +62,78 @@ from email.utils import getaddresses
 # =============================
 load_dotenv()
 
-IMAP_USER = os.getenv("IMAP_USER")
-IMAP_PASS = os.getenv("IMAP_PASS")
-IMAP_HOST = "127.0.0.1"
-IMAP_PORT = 1143
-
-MAILBOX = '"All Mail"'
-
-LABEL_PREFIX = "Labels/"
-TARGET_LABEL = LABEL_PREFIX + "CR"  # IMAP folder that acts as the CR label
-
-# Domains whose messages should be labeled
-TARGET_DOMAINS = {
-    "crosierhudson.com",
-    "crosierfamilylaw.com",
-    "mycase.com",
-}
+IMAP_USER = None
+IMAP_PASS = None
+IMAP_HOST = None
+IMAP_PORT = None
+MAILBOX = None
+TARGET_LABEL = None
+TARGET_DOMAINS = set()
 
 FETCH_BATCH_SIZE  = 10
 STATE_FLUSH_EVERY = 100   # write state file after every N messages processed
 PROGRESS_EVERY    = 250   # print progress every N messages scanned
 
-STATE_FILE    = "processed_uids_cr.txt"
+STATE_FILE    = None
 DEBUG_MATCHES = False     # set True to print each matched UID + subject
+
+
+def split_domains(value: str) -> set:
+    """Split a comma-separated domain list into normalized domain names."""
+    return {item.strip().lower().lstrip("@") for item in value.split(",") if item.strip()}
+
+
+def parse_args():
+    """Parse command-line arguments and environment-variable fallbacks."""
+    parser = argparse.ArgumentParser(
+        description="Apply an IMAP label/folder to messages matching configured address domains."
+    )
+    parser.add_argument("--imap-host", default=os.getenv("IMAP_HOST", "127.0.0.1"))
+    parser.add_argument("--imap-port", type=int, default=int(os.getenv("IMAP_PORT", "1143")))
+    parser.add_argument("--imap-user", default=os.getenv("IMAP_USER"))
+    parser.add_argument("--imap-pass", default=os.getenv("IMAP_PASS"))
+    parser.add_argument("--mailbox", default=os.getenv("MAILBOX", '"All Mail"'))
+    parser.add_argument("--target-label", default=os.getenv("TARGET_LABEL", "Labels/Evidence"))
+    parser.add_argument(
+        "--domains",
+        default=os.getenv("TARGET_DOMAINS", ""),
+        help="Comma-separated target domains, for example: example.com,example.org.",
+    )
+    parser.add_argument(
+        "--state-file",
+        default=os.getenv("STATE_FILE", "processed_uids_matching_domains.txt"),
+        help="Resume state file path.",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("fast", "full"),
+        default=os.getenv("SCAN_MODE"),
+        help="Scan mode. If omitted, the script prompts.",
+    )
+    parser.add_argument(
+        "--restart",
+        action="store_true",
+        default=os.getenv("RESTART_SCAN", "").lower() in {"1", "true", "yes"},
+        help="Clear the state file before scanning.",
+    )
+    parser.add_argument(
+        "--debug-matches",
+        action="store_true",
+        default=os.getenv("DEBUG_MATCHES", "").lower() in {"1", "true", "yes"},
+        help="Print matched UID, domain, and subject.",
+    )
+    args = parser.parse_args()
+
+    if not args.imap_user:
+        parser.error("--imap-user is required unless IMAP_USER is set.")
+    if not args.imap_pass:
+        parser.error("--imap-pass is required unless IMAP_PASS is set.")
+
+    domains = split_domains(args.domains)
+    if not domains:
+        parser.error("--domains is required unless TARGET_DOMAINS is set.")
+
+    return args, domains
 
 # =============================
 # RESUME HELPERS
@@ -160,10 +206,10 @@ def extract_domains(msg) -> set:
     return domains
 
 
-def message_is_cr(msg) -> tuple[bool, str]:
+def message_matches_domains(msg) -> tuple[bool, str]:
     """
     Return (True, matched_domain) if any address in the message belongs to a
-    Crosier-related domain, otherwise (False, '').
+    configured target domain, otherwise (False, '').
     """
     domains = extract_domains(msg)
     for d in domains:
@@ -191,29 +237,27 @@ def fetch_uids_full() -> list:
 
 def fetch_uids_fast() -> list:
     """
-    Use server-side SEARCH to pre-filter messages with '@crosier' in any
-    address header.  Much faster than a full scan; may miss a small number
-    of edge cases.
+    Use server-side SEARCH to pre-filter messages with target domains in
+    address headers. Much faster than a full scan; may miss edge cases.
     """
     imap = imaplib.IMAP4(IMAP_HOST, IMAP_PORT)
     imap.login(IMAP_USER, IMAP_PASS)
     imap.select(MAILBOX, readonly=True)
 
-    search = (
-        '(OR '
-        '(HEADER From "@crosier") '
-        '(HEADER Reply-To "@crosier") '
-        '(HEADER To "@crosier") '
-        '(HEADER Cc "@crosier")'
-        ')'
-    )
+    uids = set()
+    headers = ("From", "Reply-To", "To", "Cc")
+    for domain in sorted(TARGET_DOMAINS):
+        token = f"@{domain}"
+        for header in headers:
+            _, data = imap.uid("SEARCH", None, f'(HEADER {header} "{token}")')
+            if data and data[0]:
+                uids.update(data[0].split())
 
-    _, data = imap.uid("SEARCH", None, search)
-    uids = data[0].split()
+    sorted_uids = sorted(uids, key=lambda value: int(value))
 
     imap.logout()
-    print(f"FAST scan: {len(uids):,} candidate messages")
-    return uids
+    print(f"FAST scan: {len(sorted_uids):,} candidate messages")
+    return sorted_uids
 
 # =============================
 # PROCESSOR
@@ -221,7 +265,7 @@ def fetch_uids_fast() -> list:
 
 def process_uids(uids: list, resume: bool):
     """
-    Iterate through UIDs, fetch each message, and apply the CR label to any
+    Iterate through UIDs, fetch each message, and apply the target label to any
     that match TARGET_DOMAINS.  Writes progress to the state file for resumability.
     """
     processed = load_processed_uids()
@@ -246,7 +290,7 @@ def process_uids(uids: list, resume: bool):
 
         msg = email.message_from_bytes(data[0][1])
 
-        ok, reason = message_is_cr(msg)
+        ok, reason = message_matches_domains(msg)
         if ok:
             apply_label(imap, uid)
             matched += 1
@@ -266,18 +310,30 @@ def process_uids(uids: list, resume: bool):
 
     save_processed_uids(buffer)  # flush remaining buffer
     imap.logout()
-    print(f"Done. Scanned {scanned:,}, labeled {matched:,} as CR")
+    print(f"Done. Scanned {scanned:,}, labeled {matched:,} as {TARGET_LABEL}")
 
 # =============================
 # MAIN
 # =============================
 if __name__ == "__main__":
-    mode    = input("Scan mode (full / fast): ").strip().lower()
-    restart = input("Restart from scratch? (yes/no): ").strip().lower() == "yes"
+    cli_args, cli_domains = parse_args()
+
+    IMAP_USER = cli_args.imap_user
+    IMAP_PASS = cli_args.imap_pass
+    IMAP_HOST = cli_args.imap_host
+    IMAP_PORT = cli_args.imap_port
+    MAILBOX = cli_args.mailbox
+    TARGET_LABEL = cli_args.target_label
+    TARGET_DOMAINS = cli_domains
+    STATE_FILE = cli_args.state_file
+    DEBUG_MATCHES = cli_args.debug_matches
+
+    mode = cli_args.mode or input("Scan mode (full / fast): ").strip().lower()
+    restart = cli_args.restart or input("Restart from scratch? (yes/no): ").strip().lower() == "yes"
 
     if restart:
         wipe_resume_file()
-        print("State file cleared — starting fresh.")
+        print("State file cleared - starting fresh.")
 
     uids = fetch_uids_fast() if mode == "fast" else fetch_uids_full()
     process_uids(uids, resume=not restart)

@@ -10,8 +10,7 @@
 """
 strip_attachments_from_mbox.py
 ===============================
-Project : Crosier_Bowker — Legal Evidence Review
-Case    : Tennessee Board of Professional Responsibility, Complaint No. 105302-2026-CAP
+Project : email-evidence-tools
 Purpose : Creates a clean, attachment-free copy of an mbox archive for faster scanning
           and smaller file sizes.  For every message, any part with a Content-Disposition
           of "attachment" or a recognized filename is removed; the remaining text/inline
@@ -22,19 +21,15 @@ Purpose : Creates a clean, attachment-free copy of an mbox archive for faster sc
           if it is interrupted (e.g. by a network drive disconnect), it can pick up where
           it left off rather than starting over.
 
-Input   : INPUT_MBOX       — path to the source .mbox or mbox-format folder
+Input   : --input-mbox or MBOX_INPUT_PATH
 Output  : OUTPUT_MBOX      — <INPUT_MBOX>_NO_ATTACHMENTS  (new mbox file)
           ATTACHMENT_CSV   — attachments_inventory.csv
           CHECKPOINT_FILE  — strip_attachments.checkpoint  (auto-managed, safe to delete)
 
-Usage   : python strip_attachments_from_mbox.py
+Usage   : python strip_attachments_from_mbox.py --input-mbox "<path-to-export.mbox>"
 
-Note    : Set INPUT_MBOX below or via the environment variable MBOX_INPUT_PATH.
-          OUTPUT paths are derived automatically from INPUT_MBOX and do not need
-          to be changed unless you want to override them.
-
-Author  : Jonathan David Bowker
-Created : 2025-12-29  |  Revised : 2025-12-30
+Note    : Output paths are derived automatically from the input unless you
+          override them with command-line arguments or environment variables.
 """
 
 # --- auto-deps bootstrap (Code/scripts/_bootstrap.py) ---
@@ -54,31 +49,23 @@ import csv
 import hashlib
 import email
 import mailbox
+import argparse
 from pathlib import Path
 from email.parser import BytesParser
 from email.generator import BytesGenerator
 from email import policy
 from io import BytesIO
 
-# =============================
-# CONFIG
-# =============================
-INPUT_MBOX = Path(
-    os.getenv(
-        "MBOX_INPUT_PATH",
-        r"D:\Proton Drive\My files\Post Divorce\Diane Billing Issues\cr_mail\ch_text"
-    )
-)
-
-OUTPUT_MBOX      = INPUT_MBOX.with_name(INPUT_MBOX.name + "_NO_ATTACHMENTS")
-ATTACHMENT_CSV   = INPUT_MBOX.with_name("attachments_inventory.csv")
-CHECKPOINT_FILE  = INPUT_MBOX.with_name("strip_attachments.checkpoint")
-
 RETRY_DELAY    = 5    # seconds to wait when a drive I/O error occurs
 PROGRESS_EVERY = 500  # print progress every N messages
 
 # compat32 is the least opinionated policy for legacy/mixed-encoding messages
 PARSER = BytesParser(policy=policy.compat32)
+
+INPUT_MBOX = None
+OUTPUT_MBOX = None
+ATTACHMENT_CSV = None
+CHECKPOINT_FILE = None
 
 # =============================
 # HELPERS
@@ -130,10 +117,48 @@ def is_attachment_part(part) -> bool:
     return False
 
 
+def parse_args():
+    """Parse command-line arguments and environment-variable fallbacks."""
+    parser = argparse.ArgumentParser(
+        description="Create an attachment-free copy of an mbox archive."
+    )
+    parser.add_argument(
+        "--input-mbox",
+        default=os.getenv("MBOX_INPUT_PATH"),
+        help="Path to the source .mbox file or mbox-format folder. Defaults to MBOX_INPUT_PATH.",
+    )
+    parser.add_argument(
+        "--output-mbox",
+        default=os.getenv("OUTPUT_MBOX"),
+        help="Output mbox path. Defaults to <input>_NO_ATTACHMENTS.",
+    )
+    parser.add_argument(
+        "--attachment-csv",
+        default=os.getenv("ATTACHMENT_CSV"),
+        help="Attachment inventory CSV path. Defaults to attachments_inventory.csv beside the input.",
+    )
+    parser.add_argument(
+        "--checkpoint-file",
+        default=os.getenv("CHECKPOINT_FILE"),
+        help="Checkpoint path. Defaults to strip_attachments.checkpoint beside the input.",
+    )
+    args = parser.parse_args()
+    if not args.input_mbox:
+        parser.error("--input-mbox is required unless MBOX_INPUT_PATH is set.")
+
+    input_mbox = Path(args.input_mbox)
+    output_mbox = Path(args.output_mbox) if args.output_mbox else input_mbox.with_name(input_mbox.name + "_NO_ATTACHMENTS")
+    attachment_csv = Path(args.attachment_csv) if args.attachment_csv else input_mbox.with_name("attachments_inventory.csv")
+    checkpoint_file = Path(args.checkpoint_file) if args.checkpoint_file else input_mbox.with_name("strip_attachments.checkpoint")
+    return input_mbox, output_mbox, attachment_csv, checkpoint_file
+
+
 # =============================
 # MAIN
 # =============================
 if __name__ == "__main__":
+    INPUT_MBOX, OUTPUT_MBOX, ATTACHMENT_CSV, CHECKPOINT_FILE = parse_args()
+
     last_done  = load_checkpoint()
     resume_ok  = last_done > 0 and OUTPUT_MBOX.exists()
     mode       = "ab" if resume_ok else "wb"

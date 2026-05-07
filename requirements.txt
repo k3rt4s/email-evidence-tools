@@ -1,9 +1,8 @@
 # ============================================================
-# crosier_bowker_complaint - Python dependencies
+# email-evidence-tools - Python dependencies
 # ============================================================
-# This project runs in its own isolated venv:
-#   D:\venvs\crosier_bowker_complaint\
-# Its bootstrap loads ONLY this file (not the ai-toolkit master).
+# Recommended venv:
+#   C:\Code\venvs\email-evidence-tools\
 # ============================================================
 
 pandas>=2.2.2

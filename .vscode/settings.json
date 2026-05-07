@@ -1,4 +1,4 @@
 {
-    "python.defaultInterpreterPath": "C:\\Code\\venvs\\crosier_bowker_complaint\\Scripts\\python.exe",
+    "python.defaultInterpreterPath": "C:\\Code\\venvs\\email-evidence-tools\\Scripts\\python.exe",
     "python.envFile": "${workspaceFolder}\\.env"
 }

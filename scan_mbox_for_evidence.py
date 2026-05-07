@@ -10,22 +10,18 @@
 """
 scan_mbox_for_evidence.py
 =========================
-Project : Crosier_Bowker — Legal Evidence Review
-Case    : Tennessee Board of Professional Responsibility, Complaint No. 105302-2026-CAP
+Project : email-evidence-tools
 Purpose : Parses an .mbox email archive and scans every message body for keyword
-          categories relevant to the complaint (billing misconduct, settlement strategy
-          disagreements, communication failures, parenting-time issues, etc.).
+          categories relevant to an evidence review. The default keyword set is
+          intentionally generic and can be edited for each matter or workflow.
           Writes one CSV row per (message, category, matched term, matching sentence).
 
-Input   : MBOX_FILE   — path to the .mbox archive (set below or via env var MBOX_FILE)
-Output  : OUTPUT_FILE — mbox_evidence_hits_clean.csv
+Input   : --mbox-file or MBOX_FILE
+Output  : --output-file or OUTPUT_FILE (default: mbox_evidence_hits.csv)
 
-Usage   : python scan_mbox_for_evidence.py
+Usage   : python scan_mbox_for_evidence.py --mbox-file "<path-to-export.mbox>"
 
 Post-processing: Run clean_evidence_csv.py to strip HTML tags from the exact_text column.
-
-Author  : Jonathan David Bowker
-Created : 2025-12-29
 """
 
 # --- auto-deps bootstrap (Code/scripts/_bootstrap.py) ---
@@ -44,16 +40,10 @@ import email
 import csv
 import re
 import os
+import argparse
 from email.utils import parsedate_to_datetime
 
-# =============================
-# CONFIG
-# =============================
-MBOX_FILE = os.getenv(
-    "MBOX_FILE",
-    r"D:\Proton Drive\My files\Post Divorce\Diane Billing Issues\final\Evidence\Crosier_Bowker_Emails.mbox"
-)
-OUTPUT_FILE = "mbox_evidence_hits_clean.csv"
+DEFAULT_OUTPUT_FILE = "mbox_evidence_hits.csv"
 
 # =============================
 # SEARCH TERMS
@@ -207,18 +197,41 @@ def extract_sentences(text):
     return re.split(r'(?<=[.!?])\s+', text)
 
 
+def parse_args():
+    """Parse command-line arguments and environment-variable fallbacks."""
+    parser = argparse.ArgumentParser(
+        description="Scan an mbox export for evidence keyword hits."
+    )
+    parser.add_argument(
+        "--mbox-file",
+        default=os.getenv("MBOX_FILE"),
+        help="Path to the source .mbox file. Defaults to MBOX_FILE.",
+    )
+    parser.add_argument(
+        "--output-file",
+        default=os.getenv("OUTPUT_FILE", DEFAULT_OUTPUT_FILE),
+        help=f"CSV output path. Defaults to OUTPUT_FILE or {DEFAULT_OUTPUT_FILE}.",
+    )
+    args = parser.parse_args()
+    if not args.mbox_file:
+        parser.error("--mbox-file is required unless MBOX_FILE is set.")
+    return args
+
+
 # =============================
 # MAIN
 # =============================
 if __name__ == "__main__":
-    with open(OUTPUT_FILE, "w", newline="", encoding="utf-8") as out:
+    args = parse_args()
+
+    with open(args.output_file, "w", newline="", encoding="utf-8") as out:
         writer = csv.writer(out)
         writer.writerow([
             "date", "from", "to", "subject",
             "category", "matched_term", "exact_text"
         ])
 
-        mbox = mailbox.mbox(MBOX_FILE)
+        mbox = mailbox.mbox(args.mbox_file)
         total_hits = 0
 
         for msg in mbox:
@@ -247,5 +260,5 @@ if __name__ == "__main__":
                                 ])
                                 total_hits += 1
 
-    print(f"Done. {total_hits:,} evidence hits written to {OUTPUT_FILE}")
+    print(f"Done. {total_hits:,} evidence hits written to {args.output_file}")
     print("Next step: run clean_evidence_csv.py to strip HTML from the exact_text column.")

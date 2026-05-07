@@ -1,0 +1,24 @@
+# Local credentials and environment files
+.env
+.venv/
+venv/
+
+# Generated evidence outputs
+*.mbox
+*_NO_ATTACHMENTS
+*_NO_ATTACHMENTS.zip
+attachments_inventory.csv
+email_attachments_inventory.csv
+mbox_evidence_hits_clean*.csv
+mbox_evidence_table.csv
+processed_uids*.txt
+strip_attachments.checkpoint
+
+# Local-only evidence path notes
+docs/*.local.md
+
+# Python/cache noise
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
