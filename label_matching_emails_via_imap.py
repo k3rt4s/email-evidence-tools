@@ -1,12 +1,3 @@
-# === AI REVIEWER - READ BEFORE EDITING ==============================
-# Before changing this file, read the master workspace README at
-#   C:\Code\README.md   ("AI Session Rules" section)
-# and the README(s) for this project and sub-product. Those documents
-# are the single source of truth for venvs, path conventions,
-# archive/backup rules, markdown conventions, and every repo-wide rule.
-# Do not guess - reference the READMEs first.
-# =====================================================================
-
 """
 label_matching_emails_via_imap.py
 =================================
@@ -37,17 +28,6 @@ Requirements:
 
 Usage   : python label_matching_emails_via_imap.py --domains "example.com,example.org" --target-label "Labels/Evidence"
 """
-
-# --- auto-deps bootstrap (Code/scripts/_bootstrap.py) ---
-from pathlib import Path as _P
-import sys as _s
-_boot_dir = next((_p / "scripts" for _p in _P(__file__).resolve().parents
-                  if (_p / "scripts" / "_bootstrap.py").exists()), None)
-if _boot_dir and str(_boot_dir) not in _s.path:
-    _s.path.insert(0, str(_boot_dir))
-from _bootstrap import ensure_requirements as _ensure_reqs  # noqa: E402
-_ensure_reqs(__file__)
-# --- end bootstrap ---
 
 import imaplib
 import email

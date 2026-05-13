@@ -1,19 +1,14 @@
-# === AI REVIEWER - READ BEFORE EDITING ==============================
-# Before changing this file, read the master workspace README at
-#   C:\Code\README.md   ("AI Session Rules" section)
-# and the README(s) for this project and sub-product. Those documents
-# are the single source of truth for venvs, path conventions,
-# archive/backup rules, markdown conventions, and every repo-wide rule.
-# Do not guess - reference the READMEs first.
-# =====================================================================
-
 """
 scan_mbox_for_evidence.py
 =========================
 Project : email-evidence-tools
-Purpose : Parses an .mbox email archive and scans every message body for keyword
-          categories relevant to an evidence review. The default keyword set is
-          intentionally generic and can be edited for each matter or workflow.
+Purpose : Parses an .mbox email archive and scans every message body for
+          keyword categories. Designed as a generic content-scanner for use
+          cases like security-operations email triage, phishing/exfiltration
+          review, internal investigations, or legal evidence review. The
+          default keyword set targets security ops (phishing, data
+          exfiltration, policy violations, incident response language) and
+          should be edited per workflow.
           Writes one CSV row per (message, category, matched term, matching sentence).
 
 Input   : --mbox-file or MBOX_FILE
@@ -23,17 +18,6 @@ Usage   : python scan_mbox_for_evidence.py --mbox-file "<path-to-export.mbox>"
 
 Post-processing: Run clean_evidence_csv.py to strip HTML tags from the exact_text column.
 """
-
-# --- auto-deps bootstrap (Code/scripts/_bootstrap.py) ---
-from pathlib import Path as _P
-import sys as _s
-_boot_dir = next((_p / "scripts" for _p in _P(__file__).resolve().parents
-                  if (_p / "scripts" / "_bootstrap.py").exists()), None)
-if _boot_dir and str(_boot_dir) not in _s.path:
-    _s.path.insert(0, str(_boot_dir))
-from _bootstrap import ensure_requirements as _ensure_reqs  # noqa: E402
-_ensure_reqs(__file__)
-# --- end bootstrap ---
 
 import mailbox
 import email
@@ -48,121 +32,101 @@ DEFAULT_OUTPUT_FILE = "mbox_evidence_hits.csv"
 # =============================
 # SEARCH TERMS
 # Each key is a named evidence category; values are keyword phrases searched
-# (case-insensitive) against the normalized message body.
+# (case-insensitive) against the normalized message body. The default set
+# below targets security-operations triage of an mbox export: phishing,
+# data-exfiltration indicators, policy violations, and incident-response
+# language. Replace or extend per use case.
 # =============================
 SEARCH_TERMS = {
 
-    # ---- BILLING ----
-    "billing_promises": [
-        "reduce", "reduction", "adjustment", "courtesy",
-        "discount", "write off", "credit"
+    # ---- PHISHING & SOCIAL ENGINEERING ----
+    "credential_requests": [
+        "verify your account", "confirm your password",
+        "click here to login", "your account will be suspended",
+        "unusual sign-in", "password reset required",
+        "validate your credentials"
     ],
-    "billing_errors": [
-        "mistake", "error", "shouldn't have billed",
-        "will correct", "overbilled"
+    "executive_impersonation": [
+        "are you at your desk", "i'm in a meeting",
+        "i need this done quickly", "purchase gift cards",
+        "send me your number", "wire transfer request"
     ],
-    "billing_cost_concerns": [
-        "expensive", "high", "afford", "budget",
-        "cost", "retainer"
-    ],
-    "billing_review_promises": [
-        "review the billing", "review invoice",
-        "look at the invoice", "go through the charges",
-        "billing meeting"
-    ],
-    "payment_pressure": [
-        "past due", "overdue", "payment", "balance", "owe"
+    "payment_fraud_indicators": [
+        "updated banking details", "new account number",
+        "wire instructions", "urgent payment",
+        "invoice attached", "overdue invoice"
     ],
 
-    # ---- SETTLEMENT / STRATEGY ----
-    "settlement_phrases": [
-        "stop settlement", "stop negotiating",
-        "no settlement", "do not settle",
-        "instead of settlement", "take her to court",
-        "file instead", "court instead of settlement"
+    # ---- DATA EXFILTRATION INDICATORS ----
+    "external_share_requests": [
+        "share via dropbox", "google drive link",
+        "wetransfer", "personal email", "send to gmail",
+        "send to my home email", "outside the company"
     ],
-    "settlement_terms": [
-        "settlement", "negotiate", "negotiating", "negotiation"
+    "sensitive_data_requests": [
+        "send me the spreadsheet", "employee list",
+        "password list", "customer database",
+        "export the data", "full dataset"
     ],
-    "court_action_requests": [
-        "file", "motion", "court", "enforcement",
-        "contempt", "hearing"
-    ],
-    "strategy_disagreement": [
-        "disagree", "don't want", "not comfortable",
-        "prefer", "instead", "change strategy"
-    ],
-    "stop_indicators": [
-        "stop", "not", "no longer", "rather", "instead"
+    "credential_sharing": [
+        "here's my password", "use my login",
+        "my credentials are", "service account password",
+        "shared account"
     ],
 
-    # ---- COMMUNICATION ----
+    # ---- POLICY VIOLATIONS ----
+    "unauthorized_tools": [
+        "i installed", "downloaded from", "personal device",
+        "bypass", "workaround", "unapproved tool"
+    ],
+    "confidentiality_concerns": [
+        "confidential", "do not forward", "nda",
+        "trade secret", "proprietary", "internal only"
+    ],
+    "shadow_it": [
+        "signed up for", "created an account",
+        "new saas", "without it approval"
+    ],
+
+    # ---- INCIDENT RESPONSE LANGUAGE ----
+    "compromise_indicators": [
+        "unauthorized access", "suspicious activity",
+        "breach", "compromised", "incident",
+        "leaked", "exposed"
+    ],
+    "malware_indicators": [
+        "ransomware", "encrypted my files", "ransom note",
+        "malware detected", "antivirus alert",
+        "endpoint protection"
+    ],
+    "investigation_terms": [
+        "forensic", "preserve evidence", "chain of custody",
+        "soc ticket", "incident ticket", "triage"
+    ],
+
+    # ---- URGENCY & PRESSURE ----
+    "urgency_language": [
+        "urgent", "asap", "immediately", "right now",
+        "time sensitive", "emergency", "do not delay"
+    ],
+    "external_link_lures": [
+        "click the link", "follow this url", "log in here",
+        "open the attachment", "enable macros",
+        "view document online"
+    ],
+
+    # ---- GENERAL CORRESPONDENCE ANALYSIS ----
     "follow_ups": [
         "following up", "still waiting", "haven't heard",
         "any update", "checking in"
-    ],
-    "urgent_requests": [
-        "urgent", "emergency", "asap", "immediately",
-        "time sensitive", "deadline"
-    ],
-    "requests_for_explanation": [
-        "why", "explain", "don't understand",
-        "can you clarify", "confused"
-    ],
-
-    # ---- CHILD / PARENTING ----
-    "parenting_violations": [
-        "violation", "not following", "breach",
-        "contempt", "ignoring order"
-    ],
-    "lost_parenting_time": [
-        "missed", "didn't get", "couldn't see",
-        "denied", "cancelled"
-    ],
-    "child_urgency": [
-        "kids", "children", "parenting time",
-        "visitation", "access"
-    ],
-
-    # ---- TERMINATION / CONDUCT ----
-    "pre_termination_frustration": [
-        "frustrated", "disappointed", "concerned",
-        "worried", "unhappy"
-    ],
-    "request_change_approach": [
-        "different approach", "change course",
-        "try something else", "not working"
-    ],
-    "termination_language": [
-        "new attorney", "different lawyer",
-        "find someone else", "find new counsel",
-        "retain"
-    ],
-
-    # ---- PROMISES / DELAYS ----
-    "promises_general": [
-        "i will", "i'll", "we will", "we'll"
     ],
     "deadline_commitments": [
         "by friday", "by monday", "this week",
         "next week", "by end of"
     ],
-    "document_delivery_promises": [
-        "send you", "forward", "attach", "dropbox", "share"
-    ],
-
-    # ---- EVIDENCE / DISCLOSURE ----
-    "evidence_provided": [
+    "attachment_promises": [
         "attached", "here is", "i'm sending",
-        "evidence", "proof", "documentation"
-    ],
-    "evidence_use_requests": [
-        "use this", "include this", "show the judge",
-        "file this", "submit this"
-    ],
-    "confidentiality_concerns": [
-        "confidential", "private", "shouldn't know",
-        "how did he", "disclosed"
+        "supporting documentation", "see file"
     ]
 }
 
