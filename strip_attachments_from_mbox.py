@@ -13,9 +13,9 @@ Purpose : Creates a clean, attachment-free copy of an mbox archive for faster sc
           it left off rather than starting over.
 
 Input   : --input-mbox or MBOX_INPUT_PATH
-Output  : OUTPUT_MBOX      — <INPUT_MBOX>_NO_ATTACHMENTS  (new mbox file)
-          ATTACHMENT_CSV   — attachments_inventory.csv
-          CHECKPOINT_FILE  — strip_attachments.checkpoint  (auto-managed, safe to delete)
+Output  : OUTPUT_MBOX, <INPUT_MBOX>_NO_ATTACHMENTS  (new mbox file)
+          ATTACHMENT_CSV, attachments_inventory.csv
+          CHECKPOINT_FILE, strip_attachments.checkpoint  (auto-managed, safe to delete)
 
 Usage   : python strip_attachments_from_mbox.py --input-mbox "<path-to-export.mbox>"
 
@@ -144,7 +144,7 @@ if __name__ == "__main__":
     mode       = "ab" if resume_ok else "wb"
 
     if mode == "wb":
-        # Fresh start — remove any stale outputs to avoid accidental duplication
+        # Fresh start, remove any stale outputs to avoid accidental duplication
         if OUTPUT_MBOX.exists():
             OUTPUT_MBOX.unlink()
         if ATTACHMENT_CSV.exists():

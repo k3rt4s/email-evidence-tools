@@ -7,10 +7,10 @@ Purpose : Connects to an IMAP endpoint and labels messages that involve configur
           folder/label inside the mail client.
 
           Two scan modes are available:
-            fast  — server-side IMAP SEARCH filters on From/Reply-To/To/Cc headers
+            fast, server-side IMAP SEARCH filters on From/Reply-To/To/Cc headers
                     containing configured domain fragments. Fast but may miss edge
                     cases where a domain appears only in unsupported headers.
-            full  — downloads and inspects every message in All Mail.  Slower but
+            full, downloads and inspects every message in All Mail.  Slower but
                     exhaustive.
 
           The script is resumable: processed message UIDs are appended to a state
