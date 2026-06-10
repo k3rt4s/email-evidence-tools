@@ -1,4 +1,5 @@
-"""
+"""Stream-scans one or more mbox archives and extracts every message involving a given address, writing a filtered mbox and index CSV with resume-on-failure support.
+
 extract_messages_by_address.py
 ===============================
 Project : email-evidence-tools

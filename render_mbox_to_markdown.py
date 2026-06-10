@@ -1,4 +1,5 @@
-"""
+"""Renders an mbox archive as a single chronological Markdown document with forensic headers, plain-text bodies, and a hashed attachment manifest.
+
 render_mbox_to_markdown.py
 ===========================
 Project : email-evidence-tools

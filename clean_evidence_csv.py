@@ -1,4 +1,5 @@
-"""
+"""Strips HTML tags and normalizes whitespace in evidence CSV files produced by scan_mbox_for_evidence.py.
+
 clean_evidence_csv.py
 =====================
 Project : email-evidence-tools

@@ -1,4 +1,5 @@
-"""
+"""Creates an attachment-free copy of an mbox archive and writes a SHA-256 inventory CSV of every stripped attachment.
+
 strip_attachments_from_mbox.py
 ===============================
 Project : email-evidence-tools

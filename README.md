@@ -5,6 +5,21 @@ Python utilities for processing, reducing, scanning, and labeling email archives
 **Author:** Jon Bowker
 **Requires:** Python 3.10+. `pip install -r requirements.txt`.
 
+## Contents
+
+<!-- BEGIN CONTENTS (auto-generated, do not edit by hand) -->
+
+- [docs/](docs/README.md): Supporting documentation for email-evidence-tools, including workstation-local path notes for evidence archives.
+- [clean_evidence_csv.py](clean_evidence_csv.py): Strips HTML tags and normalizes whitespace in evidence CSV files produced by scan_mbox_for_evidence.py.
+- [extract_messages_by_address.py](extract_messages_by_address.py): Stream-scans one or more mbox archives and extracts every message involving a given address, writing a filtered mbox and index CSV with resume-on-failure support.
+- [label_matching_emails_via_imap.py](label_matching_emails_via_imap.py): Connects to an IMAP mailbox and applies a label or folder to messages whose participant addresses match configured domains.
+- [render_mbox_to_markdown.py](render_mbox_to_markdown.py): Renders an mbox archive as a single chronological Markdown document with forensic headers, plain-text bodies, and a hashed attachment manifest.
+- [requirements.txt](requirements.txt): Pinned runtime Python dependencies.
+- [scan_mbox_for_evidence.py](scan_mbox_for_evidence.py): Scans an mbox archive for configurable evidence keyword categories and writes one CSV row per matched sentence.
+- [strip_attachments_from_mbox.py](strip_attachments_from_mbox.py): Creates an attachment-free copy of an mbox archive and writes a SHA-256 inventory CSV of every stripped attachment.
+
+<!-- END CONTENTS -->
+
 ## Scripts
 
 | Script                              | Purpose                                                                                                                                                                                                                                                                             |

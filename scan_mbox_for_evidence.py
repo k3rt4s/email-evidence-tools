@@ -1,4 +1,5 @@
-"""
+"""Scans an mbox archive for configurable evidence keyword categories and writes one CSV row per matched sentence.
+
 scan_mbox_for_evidence.py
 =========================
 Project : email-evidence-tools

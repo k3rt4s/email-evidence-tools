@@ -1,4 +1,5 @@
-"""
+"""Connects to an IMAP mailbox and applies a label or folder to messages whose participant addresses match configured domains.
+
 label_matching_emails_via_imap.py
 =================================
 Project : email-evidence-tools
