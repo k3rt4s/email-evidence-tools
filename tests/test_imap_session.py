@@ -105,6 +105,43 @@ def test_fast_scan_queries_each_header_for_each_domain(session):
         assert uids == [b"1"]
 
 
+def test_a_refused_folder_creation_stops_the_run(session):
+    """imaplib returns NO rather than raising, so a swallowed result is a false success.
+
+    Against a real server this printed "labeled 1" while creating nothing and
+    copying nothing: the folder name was rejected, every COPY then failed into a
+    folder that did not exist, and the run reported the messages as labeled.
+    """
+    messages = {1: message("hit", to="person@target.test")}
+    with StubIMAPServer(messages, refuse=("CREATE",)) as server:
+        session(server, {"target.test"})
+        with pytest.raises(SystemExit) as excinfo:
+            labeler.process_uids(labeler.fetch_uids_full(), resume=False)
+
+        assert "Cannot create the target folder" in str(excinfo.value)
+        assert server.copied == []
+
+
+def test_a_refused_copy_stops_the_run(session):
+    """A server that declines the COPY must not be reported as having labeled the message."""
+    messages = {1: message("hit", to="person@target.test")}
+    with StubIMAPServer(messages, refuse=("COPY",)) as server:
+        session(server, {"target.test"})
+        with pytest.raises(RuntimeError, match="refused to copy"):
+            labeler.process_uids(labeler.fetch_uids_full(), resume=False)
+
+
+def test_mailbox_names_are_quoted_on_the_wire(session):
+    """An unquoted name with a space in it is parsed by the server as two arguments."""
+    messages = {1: message("hit", to="person@target.test")}
+    with StubIMAPServer(messages) as server:
+        session(server, {"target.test"}, label="Labels/Evidence Review")
+        labeler.process_uids(labeler.fetch_uids_full(), resume=False)
+
+        assert server.created == ["Labels/Evidence Review"]
+        assert [mailbox for _, mailbox in server.copied] == ["Labels/Evidence Review"]
+
+
 def test_login_uses_the_configured_user(session):
     with StubIMAPServer({1: message("a")}) as server:
         session(server, {"target.test"})
