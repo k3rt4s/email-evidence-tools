@@ -9,10 +9,21 @@ venv/
 *_NO_ATTACHMENTS.zip
 attachments_inventory.csv
 email_attachments_inventory.csv
-mbox_evidence_hits_clean*.csv
+mbox_evidence_hits*.csv
 mbox_evidence_table.csv
 processed_uids*.txt
 strip_attachments.checkpoint
+
+# extract_messages_by_address.py outputs
+*_index.csv
+extract.log
+checkpoint.json
+checkpoint.json.tmp
+
+# render_mbox_to_markdown.py outputs
+*_messages.csv
+render_manifest.json
+attachments/
 
 # Local-only evidence path notes
 docs/*.local.md
