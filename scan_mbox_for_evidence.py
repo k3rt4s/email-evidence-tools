@@ -10,6 +10,8 @@ Purpose : Parses an .mbox email archive and scans every message body for
           default keyword set targets security ops (phishing, data
           exfiltration, policy violations, incident response language) and
           should be edited per workflow.
+          Both the Subject header and the message body are scanned; the
+          `location` column on each row says which one the hit came from.
           Writes one CSV row per (message, category, matched term, matching sentence).
 
 Input   : --mbox-file or MBOX_FILE
@@ -28,6 +30,7 @@ import csv
 import re
 import os
 import argparse
+from email.header import decode_header, make_header
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
@@ -194,6 +197,44 @@ def extract_sentences(text):
     return re.split(r'(?<=[.!?])\s+', text)
 
 
+def decode_header_value(raw):
+    """Decode an RFC 2047 encoded header into readable text.
+
+    Subject lines arrive as `=?utf-8?B?...?=` from any client that used a
+    non-ASCII character, and matching against that encoded form finds nothing.
+    """
+    if not raw:
+        return ""
+    try:
+        return str(make_header(decode_header(str(raw))))
+    except Exception:
+        return str(raw)
+
+
+def scan_text(text, location, row_prefix, writer):
+    """Write one row per (category, term, sentence) hit in `text`. Returns the hit count.
+
+    Matching and sentence extraction both run on the same normalized text; see
+    normalize() for what splitting them apart silently costs.
+    """
+    flat = normalize(text)
+    if not flat:
+        return 0
+    lowered = flat.lower()
+    sentences = extract_sentences(flat)
+
+    hits = 0
+    for category, terms in SEARCH_TERMS.items():
+        for term in terms:
+            if term not in lowered:
+                continue
+            for sentence in sentences:
+                if term in sentence.lower():
+                    writer.writerow(row_prefix + [category, term, sentence.strip(), location])
+                    hits += 1
+    return hits
+
+
 def parse_args():
     """Parse command-line arguments and environment-variable fallbacks."""
     parser = argparse.ArgumentParser(
@@ -231,7 +272,7 @@ if __name__ == "__main__":
         writer = csv.writer(out)
         writer.writerow([
             "date", "from", "to", "subject",
-            "category", "matched_term", "exact_text"
+            "category", "matched_term", "exact_text", "location"
         ])
 
         mbox = mailbox.mbox(args.mbox_file)
@@ -244,24 +285,18 @@ if __name__ == "__main__":
             except Exception:
                 date = date_raw
 
-            sender    = msg.get("from", "")
-            recipient = msg.get("to", "")
-            subject   = msg.get("subject", "")
+            sender    = decode_header_value(msg.get("from", ""))
+            recipient = decode_header_value(msg.get("to", ""))
+            subject   = decode_header_value(msg.get("subject", ""))
 
-            body      = normalize(get_body(msg))
-            norm_body = body.lower()
-            sentences = extract_sentences(body)
+            row_prefix = [date, sender, recipient, subject]
 
-            for category, terms in SEARCH_TERMS.items():
-                for term in terms:
-                    if term in norm_body:
-                        for sentence in sentences:
-                            if term in sentence.lower():
-                                writer.writerow([
-                                    date, sender, recipient, subject,
-                                    category, term, sentence.strip()
-                                ])
-                                total_hits += 1
+            # The subject is scanned as its own source. A lure that lives
+            # entirely in the Subject header ("Urgent payment") never appears in
+            # the body, so a body-only scan reports nothing for the message that
+            # is doing the work.
+            total_hits += scan_text(subject, "subject", row_prefix, writer)
+            total_hits += scan_text(get_body(msg), "body", row_prefix, writer)
 
     print(f"Done. {total_hits:,} evidence hits written to {args.output_file}")
     print("Next step: run clean_evidence_csv.py to strip HTML from the exact_text column.")
