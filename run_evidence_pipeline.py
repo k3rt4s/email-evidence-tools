@@ -7,13 +7,16 @@ Purpose : Drives the individual tools in the order that makes sense for a case,
           passing each stage's output to the next so the six-command manual
           sequence becomes one command.
 
-          Stages, in order:
+          Stages, in order, each reading what the one before it wrote:
             1. extract  - pull every message involving --address out of the
                           source archives into a much smaller working mbox
-            2. strip    - write an attachment-free copy plus a hashed inventory
-            3. scan     - keyword-scan the extract for evidence hits
-            4. clean    - strip HTML from the hit quotes
-            5. render   - build the chronological Markdown evidence document
+            2. strip    - write an attachment-free copy of the extract, plus a
+                          hashed inventory of everything removed
+            3. scan     - keyword-scan the stripped copy for evidence hits
+            4. clean    - strip HTML from the hit quotes scan produced
+            5. render   - build the Markdown evidence document from the extract,
+                          which unlike the stripped copy still has the
+                          attachments to hash and write out
 
           Stage 1 is what makes the rest affordable: scan, strip, and render all
           index or hold the whole archive, so they run against the extract and
@@ -66,17 +69,34 @@ def parse_args():
     return parser.parse_args()
 
 
+def slugify(address: str) -> str:
+    """Match the extractor's own slug so this driver can predict its output filename."""
+    local = address.split("@", 1)[0]
+    return "".join(c if c.isalnum() or c in "_.-" else "_" for c in local).strip("_") or "extract"
+
+
 def build_plan(args, out_dir: Path):
-    """Return [(stage, [command...]), ...] for the stages that will run.
+    """Return ([(stage, [command...]), ...], {stage: required input path}).
 
     Paths are computed here rather than discovered between stages so --dry-run
     shows the real commands, not an approximation of them.
     """
-    extract_dir = out_dir / "01_extract"
-    slug = args.address.split("@", 1)[0]
-    slug = "".join(c if c.isalnum() or c in "_.-" else "_" for c in slug).strip("_") or "extract"
-    extract_mbox = extract_dir / f"{slug}.mbox"
-    hits_csv = extract_dir / f"{slug}_evidence_hits.csv"
+    slug = slugify(args.address)
+    extract_dir  = out_dir / "01_extract"
+    stripped_dir = out_dir / "02_stripped"
+    scan_dir     = out_dir / "03_scan"
+    render_dir   = out_dir / "04_render"
+
+    extract_mbox  = extract_dir / f"{slug}.mbox"
+    stripped_mbox = stripped_dir / f"{slug}_no_attachments.mbox"
+    hits_csv      = scan_dir / f"{slug}_evidence_hits.csv"
+
+    # Keyword scanning reads text parts only, so it runs against the
+    # attachment-free copy when there is one: same hits, without decoding
+    # megabytes of base64 that can never match. Rendering always uses the
+    # extract, because the stripped copy no longer holds the attachments it
+    # has to hash and write out.
+    scan_source = extract_mbox if "strip" in args.skip else stripped_mbox
 
     plan = [
         ("extract", [sys.executable, str(HERE / "extract_messages_by_address.py"),
@@ -85,35 +105,70 @@ def build_plan(args, out_dir: Path):
                      "--output-dir", str(extract_dir)]),
         ("strip", [sys.executable, str(HERE / "strip_attachments_from_mbox.py"),
                    "--input-mbox", str(extract_mbox),
-                   "--output-mbox", str(out_dir / "02_stripped" / f"{slug}_no_attachments.mbox"),
-                   "--attachment-csv", str(out_dir / "02_stripped" / "attachments_inventory.csv"),
-                   "--checkpoint-file", str(out_dir / "02_stripped" / "strip.checkpoint")]),
+                   "--output-mbox", str(stripped_mbox),
+                   "--attachment-csv", str(stripped_dir / "attachments_inventory.csv"),
+                   "--checkpoint-file", str(stripped_dir / "strip.checkpoint")]),
         ("scan", [sys.executable, str(HERE / "scan_mbox_for_evidence.py"),
-                  "--mbox-file", str(extract_mbox),
+                  "--mbox-file", str(scan_source),
                   "--output-file", str(hits_csv)]),
         ("clean", [sys.executable, str(HERE / "clean_evidence_csv.py"),
                    "--input-file", str(hits_csv),
-                   "--output-file", str(extract_dir / f"{slug}_evidence_hits_clean.csv")]),
+                   "--output-file", str(scan_dir / f"{slug}_evidence_hits_clean.csv")]),
         ("render", [sys.executable, str(HERE / "render_mbox_to_markdown.py"),
                     "--mbox-file", str(extract_mbox),
-                    "--output-dir", str(out_dir / "03_render")]
+                    "--output-dir", str(render_dir)]
                    + (["--title", args.title] if args.title else [])),
     ]
-    return [(stage, command) for stage, command in plan if stage not in args.skip]
+
+    # What each stage needs on disk before it can start, and which stage makes it.
+    inputs = {
+        "strip":  (extract_mbox, "extract"),
+        "scan":   (scan_source, "strip" if scan_source == stripped_mbox else "extract"),
+        "clean":  (hits_csv, "scan"),
+        "render": (extract_mbox, "extract"),
+    }
+    return ([(stage, command) for stage, command in plan if stage not in args.skip], inputs)
+
+
+def preflight(plan, inputs, skipped):
+    """Return a list of problems where a stage will run but its producer was skipped.
+
+    Without this the run starts, works through whatever stages it can, and fails
+    somewhere in the middle on a missing file whose real cause was a --skip flag
+    several stages earlier.
+    """
+    problems = []
+    running = {stage for stage, _ in plan}
+    for stage, (path, producer) in inputs.items():
+        if stage not in running or producer in running:
+            continue
+        if not Path(path).exists():
+            problems.append(
+                f"{stage} needs {path}, which {producer} would have made, "
+                f"but {producer} is skipped and the file is not there already"
+            )
+    return problems
 
 
 def main():
     args = parse_args()
     out_dir = Path(args.output_dir)
-    plan = build_plan(args, out_dir)
+    plan, inputs = build_plan(args, out_dir)
 
     if args.dry_run:
         for stage, command in plan:
             print(f"{stage}: {subprocess.list2cmdline(command)}")
         return 0
 
+    problems = preflight(plan, inputs, args.skip)
+    if problems:
+        for problem in problems:
+            print(f"cannot start: {problem}", file=sys.stderr)
+        return 2
+
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "02_stripped").mkdir(exist_ok=True)
+    for stage_dir in ("01_extract", "02_stripped", "03_scan", "04_render"):
+        (out_dir / stage_dir).mkdir(exist_ok=True)
     log_path = out_dir / "pipeline.log"
 
     def log(line):

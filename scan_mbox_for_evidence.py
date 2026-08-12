@@ -285,8 +285,12 @@ if __name__ == "__main__":
             except Exception:
                 date = date_raw
 
-            sender    = decode_header_value(msg.get("from", ""))
-            recipient = decode_header_value(msg.get("to", ""))
+            # From and To stay as the raw header text. They are address fields
+            # that downstream steps parse, and decoding them here would rewrite
+            # the display name inside an address list for no gain: nothing
+            # matches against them.
+            sender    = msg.get("from", "")
+            recipient = msg.get("to", "")
             subject   = decode_header_value(msg.get("subject", ""))
 
             row_prefix = [date, sender, recipient, subject]
