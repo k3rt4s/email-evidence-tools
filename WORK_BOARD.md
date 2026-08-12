@@ -2,28 +2,33 @@
 
 Active work board for email-evidence-tools, showing only what is in progress right now; shipped work lives in CHANGELOG.md and the working mental model in THEORY.md.
 
-ACTIVE THREAD: 2026-08-11 20:55
-
 ## Status values
 
 - `pending`: ready to start.
 - `in_progress`: assigned and active.
 - `blocked`: needs a decision or a missing dependency.
 
-## Work Board
+## In Progress
 
-| id  | status      | item                                                                                                                                                            |
-| --- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| E1  | in_progress | Fix the five verified silent defects and cover each with a regression test. Branch `feature/e1-e4-hardening-pass`. Committed, awaiting review and merge.        |
-| E2  | in_progress | Repo hygiene: MIT LICENSE, .gitignore coverage for render and extract outputs, README claims corrected to match actual behaviour. Committed on the same branch. |
-| E3  | in_progress | IMAP over TLS plus a resume state file keyed to the mailbox and domain set. Committed on the same branch, untested against a live server.                       |
-| E4  | in_progress | Project scaffolding: this board, CHANGELOG.md, THEORY.md. Committed on the same branch.                                                                         |
+E1 to E4 are built, committed, and unmerged on branch `feature/e1-e4-hardening-pass` (commit 2147cf4). The working tree is clean and all 33 tests pass. Nothing has been merged or pushed.
 
-The whole branch is one review unit. Next action: Jon reviews, then merge to master and push.
+Your next action: confirm with Jon whether to run `ai_development/scripts/pre_push_review.py` over the branch before merging. He was asked and powered down before answering, so do not merge or push until he picks. After he answers, run or skip the review per his answer, then merge to master and push only on an explicit go. The review question is open, not the push.
+
+What is on the branch, as one review unit:
+
+| id  | status      | item                                                                                                                                                                     |
+| --- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| E1  | in_progress | Five verified silent defects fixed, each covered by a test that fails on the pre-fix code. See CHANGELOG.md for what each one was.                                       |
+| E2  | in_progress | Repo hygiene: MIT LICENSE, .gitignore coverage for renderer and extractor outputs, README corrected to state which tools stream and which build a full index.            |
+| E3  | in_progress | IMAP over TLS (`--ssl auto\|on\|off`, `--starttls`) plus a resume state file keyed to host, mailbox, label, and domain set. Selection logic is unit-tested; see Pending. |
+| E4  | in_progress | Project scaffolding: this board, CHANGELOG.md, THEORY.md.                                                                                                                |
+
+To verify the branch yourself: `C:\Code\venvs\email-evidence-tools\Scripts\python.exe -m pytest` from the repo root. To confirm the tests are real regression guards, copy `tests/`, `pytest.ini`, and `evidence_text.py` over a checkout of master and run them there; 18 fail.
 
 ## Questions for Jon
 
-None open.
+- Run `pre_push_review.py` on this branch before merging, or merge on the strength of the local review plus the test suite? Asked, unanswered.
+- `ai_development/WORKSPACE_MAP.md` is modified and uncommitted in the ai_development working tree, from running `workspace_inventory.py --sync-readme` during this work. It carries two regenerated description lines: this project's, and a stale Fortivra one that had drifted from its README before this session. Commit both, commit only this project's, or leave it? Asked, unanswered. Tracked on the framework board, since that file belongs to ai_development.
 
 ## Pending
 
