@@ -98,6 +98,15 @@ def test_subject_line_hits_are_reported(tmp_path):
     assert {r["exact_text"] for r in subject_hits} == {"Urgent payment required"}
 
 
+def test_a_subject_hit_quotes_the_whole_subject(tmp_path):
+    """A subject is one piece of evidence, however much punctuation it holds."""
+    mbox = mb.write_mbox(tmp_path / "punct.mbox", [
+        mb.plain_message(subject="Urgent payment. Please act today.", body="Nothing here."),
+    ])
+    rows = [r for r in run_scan(mbox, tmp_path / "hits.csv") if r["location"] == "subject"]
+    assert {r["exact_text"] for r in rows} == {"Urgent payment. Please act today."}
+
+
 def test_body_hits_are_labelled_as_body(tmp_path):
     mbox = mb.write_mbox(tmp_path / "body.mbox", [
         mb.plain_message(subject="Nothing notable", body="Please send an urgent payment."),

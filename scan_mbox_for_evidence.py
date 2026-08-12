@@ -211,17 +211,22 @@ def decode_header_value(raw):
         return str(raw)
 
 
-def scan_text(text, location, row_prefix, writer):
-    """Write one row per (category, term, sentence) hit in `text`. Returns the hit count.
+def scan_text(text, location, row_prefix, writer, split_sentences=True):
+    """Write one row per (category, term, quote) hit in `text`. Returns the hit count.
 
     Matching and sentence extraction both run on the same normalized text; see
     normalize() for what splitting them apart silently costs.
+
+    `split_sentences=False` quotes the whole of `text` instead. A subject line is
+    one piece of evidence however much punctuation it contains, and splitting
+    "Urgent payment. Please act." into fragments would quote half a subject in
+    the exact_text column.
     """
     flat = normalize(text)
     if not flat:
         return 0
     lowered = flat.lower()
-    sentences = extract_sentences(flat)
+    sentences = extract_sentences(flat) if split_sentences else [flat]
 
     hits = 0
     for category, terms in SEARCH_TERMS.items():
@@ -299,7 +304,8 @@ if __name__ == "__main__":
             # entirely in the Subject header ("Urgent payment") never appears in
             # the body, so a body-only scan reports nothing for the message that
             # is doing the work.
-            total_hits += scan_text(subject, "subject", row_prefix, writer)
+            total_hits += scan_text(subject, "subject", row_prefix, writer,
+                                    split_sentences=False)
             total_hits += scan_text(get_body(msg), "body", row_prefix, writer)
 
     print(f"Done. {total_hits:,} evidence hits written to {args.output_file}")
