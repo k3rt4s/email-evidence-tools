@@ -108,7 +108,15 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-The suite builds synthetic mbox archives covering the message shapes that have caused silent failures: HTML-only bodies, keywords wrapped across a line break, nested MIME containers, and interrupted runs.
+The suite builds synthetic mbox archives covering the message shapes that have caused silent failures: HTML-only bodies, keywords wrapped across a line break, nested MIME containers, and interrupted runs. The IMAP labeler runs against an in-process stub server, so a full session is exercised without a mailbox.
+
+The live tests in `tests/test_live_imap.py` skip unless you point them at a real server:
+
+```bash
+EET_LIVE_ENV_FILE=path/to/.env pytest tests/test_live_imap.py
+```
+
+They are read-only and slow, roughly fifteen minutes against a large mailbox, because the fast-scan test issues the same four server-side searches the tool issues in normal use. The one test that writes a label needs `EET_LIVE_LABEL_TARGET` set as well, so a live run cannot modify a mailbox unless you name the folder it may create.
 
 The tools themselves need only `python-dotenv`, and that only for the IMAP labeler's `.env` support. Everything else is standard library.
 
