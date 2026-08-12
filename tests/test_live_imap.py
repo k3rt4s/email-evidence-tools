@@ -173,8 +173,13 @@ def test_fast_scan_prefilters_server_side(configured, monkeypatch):
 def test_labels_a_matching_message(configured, monkeypatch, tmp_path):
     """The only live test that modifies the mailbox, hence its own opt-in.
 
-    It creates EET_LIVE_LABEL_TARGET and copies at most one message into it.
-    Delete that folder afterwards; the tool has no undo.
+    It creates EET_LIVE_LABEL_TARGET and copies at most one message into it,
+    then deletes that folder again so the mailbox is left as it was found.
+    Deleting the folder removes the label, not the message.
+
+    Note that the target usually needs the server's namespace prefix, for
+    instance Labels/Something on Proton Bridge. A bare top-level name is
+    refused, and the tool now stops rather than reporting work it did not do.
     """
     monkeypatch.setattr(labeler, "TARGET_LABEL", LABEL_TARGET)
     monkeypatch.setattr(labeler, "STATE_FILE", str(tmp_path / "state.txt"))
@@ -199,11 +204,20 @@ def test_labels_a_matching_message(configured, monkeypatch, tmp_path):
         pytest.skip("the sampled message carries no parseable address domain")
     monkeypatch.setattr(labeler, "TARGET_DOMAINS", {sorted(domains)[0]})
 
-    labeler.process_uids([all_uids[-1]], resume=False)
-
-    connection = labeler.connect()
     try:
-        typ, _ = connection.select(f'"{LABEL_TARGET}"', readonly=True)
-        assert typ == "OK", f"{LABEL_TARGET} was not created"
+        labeler.process_uids([all_uids[-1]], resume=False)
+
+        connection = labeler.connect()
+        try:
+            typ, _ = connection.select(labeler.quote_mailbox(LABEL_TARGET), readonly=True)
+            assert typ == "OK", f"{LABEL_TARGET} was not created"
+        finally:
+            connection.logout()
     finally:
-        connection.logout()
+        # Put the mailbox back. This runs even on failure, because a half-done
+        # run still leaves a real folder behind in someone's account.
+        connection = labeler.connect()
+        try:
+            connection.delete(labeler.quote_mailbox(LABEL_TARGET))
+        finally:
+            connection.logout()

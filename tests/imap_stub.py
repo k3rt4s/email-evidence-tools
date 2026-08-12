@@ -28,7 +28,18 @@ def _redact(line: str) -> str:
 class StubIMAPServer:
     """A one-connection IMAP server backed by a dict of {uid: raw message bytes}."""
 
-    def __init__(self, messages, search_results=None):
+    def __init__(self, messages, search_results=None, ssl_context=None, refuse=(),
+                 list_extra=()):
+        # When ssl_context is given the listener speaks implicit TLS, which is
+        # what a server on port 993 does and what --ssl on connects to.
+        self.ssl_context = ssl_context
+        # Commands the server answers NO to, e.g. ("CREATE", "COPY"), so a test
+        # can check what the client does when a server declines rather than
+        # fails. imaplib returns NO to the caller instead of raising, which is
+        # exactly how a refusal gets mistaken for success.
+        self.refuse = {c.upper() for c in refuse}
+        # Mailbox names LIST reports in addition to the created ones.
+        self.list_extra = list(list_extra)
         self.messages = {str(k): v.encode() if isinstance(v, str) else v
                          for k, v in messages.items()}
         # UIDs returned for a SEARCH, defaulting to every message held.
@@ -60,8 +71,15 @@ class StubIMAPServer:
         while not self._stop.is_set():
             try:
                 conn, _ = self._sock.accept()
+                if self.ssl_context is not None:
+                    conn = self.ssl_context.wrap_socket(conn, server_side=True)
             except OSError:
                 return
+            except Exception:
+                # A client that refused our certificate never gets a session.
+                # That is the expected outcome for the verification tests, so
+                # keep listening rather than tearing the server down.
+                continue
             threading.Thread(target=self._session, args=(conn,), daemon=True).start()
 
     def _session(self, conn):
@@ -92,7 +110,9 @@ class StubIMAPServer:
                 stream.write(CRLF)
             stream.flush()
 
-        if command == "CAPABILITY":
+        if command in self.refuse:
+            send(f"{tag} NO {command} rejected by the stub")
+        elif command == "CAPABILITY":
             send("* CAPABILITY IMAP4rev1 AUTH=PLAIN", f"{tag} OK CAPABILITY completed")
         elif command == "LOGIN":
             self.logins.append(args[0].strip('"'))
@@ -104,6 +124,14 @@ class StubIMAPServer:
         elif command == "CREATE":
             self.created.append(" ".join(args).strip('"'))
             send(f"{tag} OK CREATE completed")
+        elif command == "LIST":
+            # Only folders that were actually created are listed, so a client
+            # cannot confirm a folder the server refused to make. `list_extra`
+            # lets a test add names the client did not ask for, which is what a
+            # server answering a pattern loosely looks like.
+            for name in list(self.created) + list(self.list_extra):
+                send(f'* LIST (\\HasNoChildren) "/" "{name}"')
+            send(f"{tag} OK LIST completed")
         elif command == "UID":
             return self._dispatch_uid(send, tag, args)
         elif command == "LOGOUT":
@@ -116,6 +144,9 @@ class StubIMAPServer:
     def _dispatch_uid(self, send, tag, args) -> bool:
         """Answer the UID SEARCH / FETCH / COPY forms the labeler uses."""
         sub = args[0].upper()
+        if sub in self.refuse:
+            send(f"{tag} NO UID {sub} rejected by the stub")
+            return True
         if sub == "SEARCH":
             send("* SEARCH " + " ".join(self.search_results),
                  f"{tag} OK UID SEARCH completed")
