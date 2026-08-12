@@ -10,9 +10,7 @@ Active work board for email-evidence-tools, showing only what is in progress rig
 
 ## In Progress
 
-Nothing active. The hardening pass shipped on 2026-08-12: merged to master, pushed to origin, feature branch deleted, 45 tests passing on master. What it changed is in CHANGELOG.md; what a session must believe before touching the code is in THEORY.md.
-
-Pick the next item from Pending below, or ask Jon what he wants.
+Nothing active. The project closed out on 2026-08-12: everything on the board shipped, merged to master, and pushed. 64 tests pass on master.
 
 ## Questions for Jon
 
@@ -20,10 +18,7 @@ None open.
 
 ## Pending
 
-- Exercise the IMAP labeler against a real server. Nothing here has ever opened a socket: the transport tests cover which mode is selected and that a verifying SSL context reaches `imaplib`, but no test connects. Verify `--ssl on` against a hosted provider and `--starttls` against one that advertises it, and check whether the local bridge needs `--tls-no-verify` for its self-signed certificate. This is the only unproven path in shipped code.
-- Scan subject lines as well as bodies. `scan_mbox_for_evidence.py` reads bodies only, so a lure living entirely in the `Subject` header produces no hit. Decide first what goes in the `exact_text` column for a subject hit, since that column is the quoted evidence.
-- Consider a single driver that runs extract, strip, scan, clean, and render as one pipeline. The README documents a six-command manual sequence. Convenience only, no correctness argument behind it.
-- Framework proposal, needs Jon's approval before anyone edits the framework: add `pytest.ini` to `COMMON_FILE_DESCRIPTIONS` in `ai_development/scripts/workspace_inventory.py`, so the CONTENTS manifest describes it instead of listing a bare link. Affects every project carrying one, so it belongs to the framework board once approved.
+- Authenticate the IMAP labeler against a real mailbox. Everything else about it is now covered: the transport was verified against the live local bridge, and a stub IMAP server exercises login, search, fetch and COPY. What has never run is a session against a real server with real credentials, which needs the Proton Bridge password from its GUI, or a hosted account. Until then `--ssl on` against a hosted provider is unproven end to end.
 
 ## Where things live
 
