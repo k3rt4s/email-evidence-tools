@@ -2,7 +2,7 @@
 
 Notable user-facing changes to email-evidence-tools. Newest first.
 
-## 2026-08-12, later
+## 2026-08-12, close-out
 
 Closing out the remaining board items.
 
@@ -12,7 +12,7 @@ Closing out the remaining board items.
 - Added `tests/imap_stub.py`, an in-process IMAP server, and the session tests that drive the labeler through login, search, fetch and COPY against it. The labeler's behaviour once connected was previously untested.
 - Verified the transport against the live local bridge: certificate verification rejects its self-signed certificate as it should, `--tls-no-verify` upgrades to TLS 1.3, and `auto` selects plaintext for loopback. Login against a real server still needs the bridge password and remains unexercised.
 
-## 2026-08-12
+## 2026-08-12, hardening review
 
 Findings from the pre-push peer review of the hardening pass below, fixed before it landed.
 

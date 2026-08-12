@@ -28,9 +28,10 @@ Inputs  : --mbox-file PATH [PATH ...]   source archives
           --skip STAGE [STAGE ...]      stages to leave out
           --dry-run                     print the plan and exit
 
-Outputs : Under <output-dir>, one folder per stage plus pipeline.log. Each tool
-          keeps its own outputs and checkpoints, so a failed run resumes by
-          re-running the same command.
+Outputs : Under <output-dir>: 01_extract, 02_stripped, 03_scan (which holds both
+          the raw and the cleaned hit CSVs, since clean rewrites what scan wrote),
+          04_render, and pipeline.log. Each tool keeps its own outputs and
+          checkpoints, so a failed run resumes by re-running the same command.
 
 Usage   : python run_evidence_pipeline.py \\
               --mbox-file "D:\\export\\All Mail" \\
@@ -44,6 +45,8 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+from extract_messages_by_address import slugify as _extract_slugify
 
 HERE = Path(__file__).resolve().parent
 
@@ -70,9 +73,16 @@ def parse_args():
 
 
 def slugify(address: str) -> str:
-    """Match the extractor's own slug so this driver can predict its output filename."""
-    local = address.split("@", 1)[0]
-    return "".join(c if c.isalnum() or c in "_.-" else "_" for c in local).strip("_") or "extract"
+    """Return the extractor's own slug, so the two can never disagree.
+
+    This driver has to know what the extract stage will name its output before
+    that stage has run. Reimplementing the rule here is how the pair drifts
+    apart: a local copy using str.isalnum(), which is Unicode-aware, already
+    disagreed with the extractor's ASCII character class on any address with an
+    accent in it, and every later stage would then look for a file that was
+    never written.
+    """
+    return _extract_slugify(address)
 
 
 def build_plan(args, out_dir: Path):
