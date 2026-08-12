@@ -86,6 +86,46 @@ def test_normalize_collapses_whitespace_without_lowercasing():
     assert scan.normalize("Two\nLines   here") == "Two Lines here"
 
 
+def test_subject_line_hits_are_reported(tmp_path):
+    """A lure can live entirely in the Subject header, where a body-only scan sees nothing."""
+    mbox = mb.write_mbox(tmp_path / "subject.mbox", [
+        mb.plain_message(subject="Urgent payment required", body="Nothing notable here."),
+    ])
+    rows = run_scan(mbox, tmp_path / "hits.csv")
+
+    subject_hits = [r for r in rows if r["location"] == "subject"]
+    assert "urgent payment" in {r["matched_term"] for r in subject_hits}
+    assert {r["exact_text"] for r in subject_hits} == {"Urgent payment required"}
+
+
+def test_body_hits_are_labelled_as_body(tmp_path):
+    mbox = mb.write_mbox(tmp_path / "body.mbox", [
+        mb.plain_message(subject="Nothing notable", body="Please send an urgent payment."),
+    ])
+    rows = run_scan(mbox, tmp_path / "hits.csv")
+    assert {r["location"] for r in rows} == {"body"}
+
+
+def test_a_term_in_both_places_is_reported_twice(tmp_path):
+    """Subject and body are separate sources of evidence and each is quoted."""
+    mbox = mb.write_mbox(tmp_path / "both.mbox", [
+        mb.plain_message(subject="Urgent payment", body="This is an urgent payment request."),
+    ])
+    rows = [r for r in run_scan(mbox, tmp_path / "hits.csv") if r["matched_term"] == "urgent payment"]
+    assert sorted(r["location"] for r in rows) == ["body", "subject"]
+
+
+def test_encoded_subject_is_decoded_before_matching(tmp_path):
+    """An RFC 2047 subject matches nothing while it is still base64."""
+    mbox = mb.write_mbox(tmp_path / "encoded.mbox", [
+        mb.plain_message(subject="=?utf-8?B?VXJnZW50IHBheW1lbnQgbmVlZGVkIOKAkyBhY3Q=?=",
+                         body="Nothing notable here."),
+    ])
+    rows = run_scan(mbox, tmp_path / "hits.csv")
+    assert "urgent payment" in {r["matched_term"] for r in rows}
+    assert all("Urgent payment needed" in r["exact_text"] for r in rows)
+
+
 def test_unusual_text_subtypes_are_still_read():
     """Narrowing to text/plain and text/html would silently skip other text parts.
 
