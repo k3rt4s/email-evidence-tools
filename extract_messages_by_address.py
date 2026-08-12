@@ -267,6 +267,30 @@ def main():
     seen_message_ids = set(checkpoint.get("seen_message_ids", []))
     file_state = checkpoint.get("files", {})
 
+    # Roll both outputs back to the length they had at the last checkpoint.
+    # Matches are written the moment they are found but the checkpoint only
+    # flushes every CHECKPOINT_EVERY messages, so an interrupted run leaves a
+    # tail of messages that are already in the mbox and the index yet absent
+    # from seen_message_ids. Without this rollback the rescan re-extracts every
+    # one of them and the exhibit silently gains duplicates.
+    if checkpoint and "out_mbox_bytes" not in checkpoint:
+        # Written by a version that did not record output lengths, so there is
+        # no safe point to resume from. Rescanning costs time; resuming anyway
+        # costs a duplicated exhibit that nothing downstream can detect.
+        print(
+            f"{checkpoint_path.name} predates exact resume and records no output "
+            "lengths; restarting this extract from the beginning.",
+            flush=True,
+        )
+        checkpoint, seen_message_ids, file_state = {}, set(), {}
+    # No checkpoint at all means nothing is confirmed processed, so any output
+    # already on disk is an unconfirmed tail and both files start empty.
+    for out_path, size_key in ((out_mbox_path, "out_mbox_bytes"),
+                               (index_csv_path, "out_index_csv_bytes")):
+        recorded = checkpoint.get(size_key, 0)
+        if out_path.exists() and out_path.stat().st_size > recorded:
+            os.truncate(out_path, recorded)
+
     parser = BytesParser(policy=policy.compat32)
 
     def log(line: str):
@@ -286,6 +310,13 @@ def main():
     # Open outputs in append mode so resume keeps prior writes.
     out_fh, _ = (out_mbox_path.open("ab"), None)
     csv_fh, csv_w = open_csv_for_append(index_csv_path)
+
+    def output_sizes():
+        """Byte length of each output as currently flushed to disk, for exact resume."""
+        return {
+            "out_mbox_bytes": os.fstat(out_fh.fileno()).st_size,
+            "out_index_csv_bytes": os.fstat(csv_fh.fileno()).st_size,
+        }
 
     total_matched = checkpoint.get("total_matched", 0)
     total_scanned = checkpoint.get("total_scanned", 0)
@@ -394,6 +425,7 @@ def main():
                         "total_matched": total_matched,
                         "total_scanned": total_scanned,
                         "updated": datetime.now(timezone.utc).isoformat(),
+                        **output_sizes(),
                     })
 
             # End of this mbox - mark fully complete.
@@ -411,6 +443,7 @@ def main():
                 "total_matched": total_matched,
                 "total_scanned": total_scanned,
                 "updated": datetime.now(timezone.utc).isoformat(),
+                **output_sizes(),
             })
             log(
                 f"finished {mbox_path.name}: scanned {file_scanned_msgs:,}, "
