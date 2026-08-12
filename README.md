@@ -80,6 +80,8 @@ python label_matching_emails_via_imap.py --imap-host imap.example.com --imap-por
     --domains "example.com" --target-label "Labels/Evidence" --mode fast
 ```
 
+Many servers require a namespace prefix on the target folder, so `--target-label "Labels/Evidence"` is accepted where a bare `Evidence` is refused. The tool stops with the server's reason rather than continuing, since a rejected folder name means nothing gets labeled at all.
+
 Use `--starttls` for a server that upgrades a plaintext connection in place, and `--ssl off` only on a link you already trust. TLS connections validate the certificate chain and hostname; `imaplib` does not do this on its own, so pass `--tls-no-verify` deliberately if you need to reach a bridge presenting a self-signed certificate.
 
 Outputs default to sitting beside their input rather than in the working directory, so running a tool from inside a code checkout cannot drop evidence into it. Pass `--output-file` or `--output-dir` to place them anywhere else.
