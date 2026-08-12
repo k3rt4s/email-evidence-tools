@@ -41,6 +41,7 @@ import imaplib
 import email
 import hashlib
 import os
+import ssl
 import time
 import argparse
 from dotenv import load_dotenv
@@ -67,6 +68,7 @@ STATE_FILE    = None
 DEBUG_MATCHES = False     # set True to print each matched UID + subject
 USE_SSL       = True      # implicit TLS (IMAP4_SSL)
 USE_STARTTLS  = False     # plaintext socket upgraded in place
+VERIFY_TLS    = True      # validate the server certificate chain and hostname
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 IMAPS_PORT  = 993
@@ -119,14 +121,36 @@ def default_state_file(host, port, mailbox, label, domains) -> str:
     return f"processed_uids_{hashlib.sha256(key.encode()).hexdigest()[:8]}.txt"
 
 
+def tls_context(verify: bool = True) -> ssl.SSLContext:
+    """Return the SSL context to use for TLS connections.
+
+    This must be passed explicitly. Left to itself `imaplib` builds its context
+    with `ssl._create_stdlib_context()`, for implicit TLS and for STARTTLS alike,
+    and that context sets check_hostname=False and verify_mode=CERT_NONE. The
+    connection is then encrypted but unauthenticated, which stops a passive
+    listener and does nothing at all about an active one: any host that can
+    answer for the address can present its own certificate, take the password,
+    and proxy the session. `ssl.create_default_context()` verifies both the
+    chain and the hostname.
+    """
+    if not verify:
+        context = ssl._create_unverified_context()
+        print(
+            "WARNING: TLS certificate verification is disabled. The connection is "
+            "encrypted but the server is not authenticated."
+        )
+        return context
+    return ssl.create_default_context()
+
+
 def connect() -> imaplib.IMAP4:
     """Open and authenticate an IMAP connection using the resolved transport."""
     if USE_SSL:
-        imap = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
+        imap = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT, ssl_context=tls_context(VERIFY_TLS))
     else:
         imap = imaplib.IMAP4(IMAP_HOST, IMAP_PORT)
         if USE_STARTTLS:
-            imap.starttls()
+            imap.starttls(ssl_context=tls_context(VERIFY_TLS))
     imap.login(IMAP_USER, IMAP_PASS)
     return imap
 
@@ -163,6 +187,12 @@ def parse_args():
         action="store_true",
         default=os.getenv("IMAP_STARTTLS", "").lower() in {"1", "true", "yes"},
         help="Connect in plaintext and upgrade with STARTTLS. Not valid with --ssl on.",
+    )
+    parser.add_argument(
+        "--tls-no-verify",
+        action="store_true",
+        default=os.getenv("IMAP_TLS_NO_VERIFY", "").lower() in {"1", "true", "yes"},
+        help="Skip certificate validation, for a bridge presenting a self-signed certificate.",
     )
     parser.add_argument(
         "--mode",
@@ -390,6 +420,7 @@ if __name__ == "__main__":
     )
     DEBUG_MATCHES = cli_args.debug_matches
     USE_SSL, USE_STARTTLS = resolve_transport(cli_args)
+    VERIFY_TLS = not cli_args.tls_no_verify
     print(
         f"Connecting to {IMAP_HOST}:{IMAP_PORT} "
         f"({'implicit TLS' if USE_SSL else 'STARTTLS' if USE_STARTTLS else 'plaintext'}), "
