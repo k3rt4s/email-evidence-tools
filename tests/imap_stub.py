@@ -12,6 +12,19 @@ import threading
 CRLF = b"\r\n"
 
 
+def _redact(line: str) -> str:
+    """Blank the credentials out of a recorded command line.
+
+    LOGIN carries the password in band. A test helper that keeps a verbatim
+    transcript would put it in an assertion message, a pytest failure dump, or
+    CI output the moment a test breaks.
+    """
+    parts = line.split()
+    if len(parts) > 2 and parts[1].upper() in ("LOGIN", "AUTHENTICATE"):
+        return " ".join(parts[:3] + ["<redacted>"] * (len(parts) - 3))
+    return line
+
+
 class StubIMAPServer:
     """A one-connection IMAP server backed by a dict of {uid: raw message bytes}."""
 
@@ -60,7 +73,7 @@ class StubIMAPServer:
                 line = stream.readline()
                 if not line:
                     return
-                self.commands.append(line.decode("utf-8", "replace").strip())
+                self.commands.append(_redact(line.decode("utf-8", "replace").strip()))
                 try:
                     if not self._dispatch(stream, line):
                         return

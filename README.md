@@ -52,7 +52,11 @@ python run_evidence_pipeline.py \
     --output-dir "<case-folder>"
 ```
 
-Add `--dry-run` to see the plan first, or `--skip strip render` to leave stages out. A stage that fails stops the run rather than feeding a half-written file to the next one; fix the cause and re-run the same command, and the checkpointed stages pick up where they stopped.
+Each stage reads what the one before it wrote: strip works on the extract, scan works on the stripped copy, clean works on scan's CSV. Render is the exception and goes back to the extract, because the stripped copy no longer holds the attachments it has to hash. Outputs land in `01_extract`, `02_stripped`, `03_scan` and `04_render` under the case folder.
+
+Add `--dry-run` to see the plan first, or `--skip strip render` to leave stages out. Skipping a stage whose output a later one needs fails immediately rather than partway through. A stage that fails stops the run rather than feeding a half-written file to the next one; fix the cause and re-run the same command, and the checkpointed stages pick up where they stopped.
+
+Point `--output-dir` outside any code checkout. On this workstation that means the data root, never `C:\Code\`.
 
 Or each tool on its own:
 
