@@ -28,6 +28,8 @@ import os
 import argparse
 from email.utils import parsedate_to_datetime
 
+from evidence_text import html_to_text
+
 DEFAULT_OUTPUT_FILE = "mbox_evidence_hits.csv"
 
 # =============================
@@ -136,25 +138,52 @@ SEARCH_TERMS = {
 # =============================
 
 def get_body(msg):
-    """Extract plain-text body from a message, handling multipart structures."""
-    if msg.is_multipart():
-        for part in msg.walk():
-            if part.get_content_type() == "text/plain":
-                try:
-                    return part.get_payload(decode=True).decode(errors="ignore")
-                except Exception:
-                    return ""
-    else:
+    """Extract readable text from a message, preferring text/plain and falling back to HTML.
+
+    Every text part is collected, not just the first: a message can carry more
+    than one text/plain part, and taking only the first drops the rest.
+
+    The HTML fallback is load-bearing. A multipart/alternative message with no
+    text/plain part is common from Outlook and from marketing systems, and
+    without the fallback its body reads as empty, so the message is scanned as
+    if it were blank and can never produce a hit.
+    """
+    plain, html = [], []
+    for part in msg.walk():
+        if part.get_content_maintype() == "multipart":
+            continue
+        ctype = part.get_content_type()
+        if ctype not in ("text/plain", "text/html"):
+            continue
         try:
-            return msg.get_payload(decode=True).decode(errors="ignore")
+            payload = part.get_payload(decode=True)
         except Exception:
-            return ""
+            continue
+        if not payload:
+            continue
+        charset = part.get_content_charset() or "utf-8"
+        try:
+            text = payload.decode(charset, errors="ignore")
+        except (LookupError, UnicodeDecodeError):
+            text = payload.decode("utf-8", errors="ignore")
+        (plain if ctype == "text/plain" else html).append(text)
+
+    if plain:
+        return "\n\n".join(plain)
+    if html:
+        return "\n\n".join(html_to_text(h) for h in html)
     return ""
 
 
 def normalize(text):
-    """Lowercase and collapse whitespace for consistent matching."""
-    return re.sub(r"\s+", " ", text.lower())
+    """Collapse whitespace runs to single spaces, preserving case.
+
+    Both the body-level term check and the sentence split must run on this same
+    normalized text. Normalizing only one of them silently discards every hit
+    whose keyword crosses a line break: the term is present in the collapsed
+    body, absent from every raw sentence, and so no row is ever written.
+    """
+    return re.sub(r"\s+", " ", text)
 
 
 def extract_sentences(text):
@@ -210,8 +239,8 @@ if __name__ == "__main__":
             recipient = msg.get("to", "")
             subject   = msg.get("subject", "")
 
-            body      = get_body(msg)
-            norm_body = normalize(body)
+            body      = normalize(get_body(msg))
+            norm_body = body.lower()
             sentences = extract_sentences(body)
 
             for category, terms in SEARCH_TERMS.items():

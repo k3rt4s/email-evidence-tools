@@ -1,8 +1,9 @@
 # email-evidence-tools
 
-Python utilities for processing, reducing, scanning, and labeling email archives in mbox or IMAP form. Suitable for security-operations triage of an exported mailbox (phishing, exfiltration, policy violations), internal investigations, incident response, or legal evidence review. Designed for streaming and resume-on-failure so they handle multi-gigabyte archives without blowing memory or losing progress on a network disconnect.
+Python utilities for processing, reducing, scanning, and labeling email archives in mbox or IMAP form. Suitable for security-operations triage of an exported mailbox (phishing, exfiltration, policy violations), internal investigations, incident response, or legal evidence review. The long-running tools checkpoint their progress, so an interrupted run resumes exactly instead of duplicating or losing records.
 
 **Author:** Jon Bowker
+**License:** MIT, see [LICENSE](LICENSE).
 **Requires:** Python 3.10+. `pip install -r requirements.txt`.
 
 ## Contents
@@ -10,13 +11,20 @@ Python utilities for processing, reducing, scanning, and labeling email archives
 <!-- BEGIN CONTENTS (auto-generated, do not edit by hand) -->
 
 - [docs/](docs/README.md): Supporting documentation for email-evidence-tools, including workstation-local path notes for evidence archives.
+- [tests/](tests/README.md): Regression tests for email-evidence-tools, built on synthetic mbox archives that reproduce the message shapes and interrupted runs that have caused silent failures.
+- [CHANGELOG.md](CHANGELOG.md): Notable user-facing changes to email-evidence-tools.
 - [clean_evidence_csv.py](clean_evidence_csv.py): Strips HTML tags and normalizes whitespace in evidence CSV files produced by scan_mbox_for_evidence.py.
+- [evidence_text.py](evidence_text.py): Converts HTML email bodies to plain text for rendering and keyword scanning.
 - [extract_messages_by_address.py](extract_messages_by_address.py): Stream-scans one or more mbox archives and extracts every message involving a given address, writing a filtered mbox and index CSV with resume-on-failure support.
 - [label_matching_emails_via_imap.py](label_matching_emails_via_imap.py): Connects to an IMAP mailbox and applies a label or folder to messages whose participant addresses match configured domains.
+- [pytest.ini](pytest.ini)
 - [render_mbox_to_markdown.py](render_mbox_to_markdown.py): Renders an mbox archive as a single chronological Markdown document with forensic headers, plain-text bodies, and a hashed attachment manifest.
+- [requirements-dev.txt](requirements-dev.txt): Pinned development and test dependencies.
 - [requirements.txt](requirements.txt): Pinned runtime Python dependencies.
 - [scan_mbox_for_evidence.py](scan_mbox_for_evidence.py): Scans an mbox archive for configurable evidence keyword categories and writes one CSV row per matched sentence.
 - [strip_attachments_from_mbox.py](strip_attachments_from_mbox.py): Creates an attachment-free copy of an mbox archive and writes a SHA-256 inventory CSV of every stripped attachment.
+- [THEORY.md](THEORY.md): What a session needs to believe before it changes anything here.
+- [WORK_BOARD.md](WORK_BOARD.md): Active work board for email-evidence-tools, showing only what is in progress right now; shipped work lives in CHANGELOG.md and the working mental model in THEORY.md.
 
 <!-- END CONTENTS -->
 
@@ -46,6 +54,40 @@ python label_matching_emails_via_imap.py --domains "example.com,example.org" --t
 
 All scripts also accept their inputs via environment variables for automation; see each script's docstring for the supported variables.
 
+`label_matching_emails_via_imap.py` uses TLS by default for every host except a local mail bridge, so it works against a hosted provider as well as a bridge:
+
+```bash
+python label_matching_emails_via_imap.py --imap-host imap.example.com --imap-port 993 \
+    --domains "example.com" --target-label "Labels/Evidence" --mode fast
+```
+
+Use `--starttls` for a server that upgrades a plaintext connection in place, and `--ssl off` only on a link you already trust.
+
+## Scale and resume
+
+The tools differ in how much of an archive they hold at once, which decides what each one is usable on:
+
+| Script                              | Reads                                                          | Resume                                                         |
+| ----------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------- |
+| `extract_messages_by_address.py`    | Streams the file in chunks; memory is flat at any size.        | Byte-offset checkpoint, outputs roll back to it exactly.       |
+| `strip_attachments_from_mbox.py`    | Uses `mailbox.mbox`, which indexes the whole archive up front. | Per-message checkpoint, outputs roll back to it exactly.       |
+| `scan_mbox_for_evidence.py`         | Uses `mailbox.mbox`, one message body at a time after that.    | None; re-run from the start.                                   |
+| `render_mbox_to_markdown.py`        | Holds every parsed message in memory to sort chronologically.  | None; render the extract, not the full archive.                |
+| `label_matching_emails_via_imap.py` | One message at a time over IMAP.                               | Processed-UID state file, keyed to host, mailbox, and domains. |
+
+Run `extract_messages_by_address.py` first on a very large archive and point the rest at its much smaller output.
+
+Resume is exactly-once for the two checkpointed tools: each records the byte length of its outputs alongside its position, and truncates back to that length before appending. A checkpoint written before this was added is refused rather than resumed, because a stale one silently duplicates records.
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+The suite builds synthetic mbox archives covering the message shapes that have caused silent failures: HTML-only bodies, keywords wrapped across a line break, nested MIME containers, and interrupted runs.
+
 ## Data hygiene
 
 These tools operate on user-provided email archives that may contain PII, credentials, or sensitive correspondence. Treat the repository as code-only:
@@ -59,11 +101,20 @@ These tools operate on user-provided email archives that may contain PII, creden
 ```text
 email-evidence-tools/
 ├── clean_evidence_csv.py
+├── evidence_text.py
 ├── extract_messages_by_address.py
 ├── label_matching_emails_via_imap.py
 ├── render_mbox_to_markdown.py
 ├── scan_mbox_for_evidence.py
 ├── strip_attachments_from_mbox.py
+├── tests/
+├── docs/
 ├── requirements.txt
+├── requirements-dev.txt
+├── pytest.ini
+├── LICENSE
+├── CHANGELOG.md
+├── THEORY.md
+├── WORK_BOARD.md
 └── README.md
 ```
