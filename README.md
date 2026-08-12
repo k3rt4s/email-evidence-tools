@@ -44,9 +44,9 @@ Python utilities for processing, reducing, scanning, and labeling email archives
 ```bash
 python extract_messages_by_address.py --mbox-file "<path-to-export.mbox>" --address "someone@example.com"
 python render_mbox_to_markdown.py --mbox-file "<extracted.mbox>" --output-dir "<out-dir>"
-python scan_mbox_for_evidence.py --mbox-file "<path-to-export.mbox>" --output-file "evidence_hits.csv"
+python scan_mbox_for_evidence.py --mbox-file "<path-to-export.mbox>"
 python strip_attachments_from_mbox.py --input-mbox "<path-to-export.mbox>"
-python clean_evidence_csv.py --input-file "evidence_hits.csv" --output-file "evidence_hits_clean.csv"
+python clean_evidence_csv.py --input-file "<archive>_evidence_hits.csv"
 python label_matching_emails_via_imap.py --domains "example.com,example.org" --target-label "Labels/Evidence"
 ```
 
@@ -61,7 +61,9 @@ python label_matching_emails_via_imap.py --imap-host imap.example.com --imap-por
     --domains "example.com" --target-label "Labels/Evidence" --mode fast
 ```
 
-Use `--starttls` for a server that upgrades a plaintext connection in place, and `--ssl off` only on a link you already trust.
+Use `--starttls` for a server that upgrades a plaintext connection in place, and `--ssl off` only on a link you already trust. TLS connections validate the certificate chain and hostname; `imaplib` does not do this on its own, so pass `--tls-no-verify` deliberately if you need to reach a bridge presenting a self-signed certificate.
+
+Outputs default to sitting beside their input rather than in the working directory, so running a tool from inside a code checkout cannot drop evidence into it. Pass `--output-file` or `--output-dir` to place them anywhere else.
 
 ## Scale and resume
 
@@ -87,6 +89,8 @@ pytest
 ```
 
 The suite builds synthetic mbox archives covering the message shapes that have caused silent failures: HTML-only bodies, keywords wrapped across a line break, nested MIME containers, and interrupted runs.
+
+The tools themselves need only `python-dotenv`, and that only for the IMAP labeler's `.env` support. Everything else is standard library.
 
 ## Data hygiene
 

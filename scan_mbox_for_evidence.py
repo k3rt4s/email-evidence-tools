@@ -13,7 +13,9 @@ Purpose : Parses an .mbox email archive and scans every message body for
           Writes one CSV row per (message, category, matched term, matching sentence).
 
 Input   : --mbox-file or MBOX_FILE
-Output  : --output-file or OUTPUT_FILE (default: mbox_evidence_hits.csv)
+Output  : --output-file or OUTPUT_FILE. Defaults to <input>_evidence_hits.csv
+          beside the source archive, never the working directory, so a run
+          started from inside a code repository cannot drop evidence into it.
 
 Usage   : python scan_mbox_for_evidence.py --mbox-file "<path-to-export.mbox>"
 
@@ -27,10 +29,9 @@ import re
 import os
 import argparse
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 
 from evidence_text import html_to_text
-
-DEFAULT_OUTPUT_FILE = "mbox_evidence_hits.csv"
 
 # =============================
 # SEARCH TERMS
@@ -150,11 +151,9 @@ def get_body(msg):
     """
     plain, html = [], []
     for part in msg.walk():
-        if part.get_content_maintype() == "multipart":
+        if part.get_content_maintype() != "text":
             continue
         ctype = part.get_content_type()
-        if ctype not in ("text/plain", "text/html"):
-            continue
         try:
             payload = part.get_payload(decode=True)
         except Exception:
@@ -166,7 +165,11 @@ def get_body(msg):
             text = payload.decode(charset, errors="ignore")
         except (LookupError, UnicodeDecodeError):
             text = payload.decode("utf-8", errors="ignore")
-        (plain if ctype == "text/plain" else html).append(text)
+        # Any text/* subtype that is not HTML is read as plain text. Restricting
+        # this to text/plain would drop text/enriched, text/rfc822-headers and
+        # the various oddly-labelled text parts legacy clients emit, which is the
+        # same class of silent false negative as skipping HTML bodies.
+        (html if ctype == "text/html" else plain).append(text)
 
     if plain:
         return "\n\n".join(plain)
@@ -203,12 +206,18 @@ def parse_args():
     )
     parser.add_argument(
         "--output-file",
-        default=os.getenv("OUTPUT_FILE", DEFAULT_OUTPUT_FILE),
-        help=f"CSV output path. Defaults to OUTPUT_FILE or {DEFAULT_OUTPUT_FILE}.",
+        default=os.getenv("OUTPUT_FILE"),
+        help="CSV output path. Defaults to <input>_evidence_hits.csv beside the source archive.",
     )
     args = parser.parse_args()
     if not args.mbox_file:
         parser.error("--mbox-file is required unless MBOX_FILE is set.")
+    if not args.output_file:
+        # Beside the archive, not in the working directory. A relative default
+        # writes evidence wherever the tool happens to be run from, which on this
+        # workstation means into a code repository.
+        source = Path(args.mbox_file)
+        args.output_file = str(source.with_name(f"{source.stem}_evidence_hits.csv"))
     return args
 
 

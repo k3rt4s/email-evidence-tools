@@ -265,10 +265,25 @@ if __name__ == "__main__":
             gen.flatten(parsed)
             msg_bytes = buffer.getvalue()
 
+            # Where both outputs stood before this message. A retry rewinds to
+            # here first: the message bytes and the inventory rows are one unit,
+            # so a failure partway through must not leave half of it behind to be
+            # written again on the next attempt.
+            mbox_mark = os.fstat(out_f.fileno()).st_size
+            csv_mark  = os.fstat(csv_f.fileno()).st_size
+
             written = False
             while not written:
                 try:
                     wait_for_parent(OUTPUT_MBOX)
+                    # Start every attempt from the mark, so a half-written
+                    # message from a failed one is discarded rather than
+                    # duplicated. Both handles are in append mode, so the
+                    # truncate is what matters and the seek is belt and braces.
+                    out_f.truncate(mbox_mark)
+                    out_f.seek(mbox_mark)
+                    csv_f.truncate(csv_mark)
+                    csv_f.seek(csv_mark)
                     out_f.write(b"From nobody Thu Jan 01 00:00:00 1970\n")
                     out_f.write(msg_bytes)
                     out_f.write(b"\n")

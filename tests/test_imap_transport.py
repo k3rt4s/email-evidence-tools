@@ -1,5 +1,7 @@
 """Covers TLS selection and resume-state keying in label_matching_emails_via_imap.py."""
 
+import imaplib
+import ssl
 from argparse import Namespace
 
 import pytest
@@ -65,3 +67,68 @@ def test_state_file_ignores_domain_ordering():
 
 def test_split_domains_normalizes_input():
     assert labeler.split_domains(" @Example.COM , example.org ,") == {"example.com", "example.org"}
+
+
+def test_tls_context_verifies_by_default():
+    """imaplib's own default context sets check_hostname=False and CERT_NONE.
+
+    Relying on it gives an encrypted but unauthenticated session, which any host
+    able to answer for the address can terminate with its own certificate and
+    read the password out of.
+    """
+    context = labeler.tls_context()
+    assert context.check_hostname is True
+    assert context.verify_mode == ssl.CERT_REQUIRED
+
+
+def test_tls_context_can_be_downgraded_explicitly(capsys):
+    context = labeler.tls_context(verify=False)
+    assert context.check_hostname is False
+    assert context.verify_mode == ssl.CERT_NONE
+    assert "not authenticated" in capsys.readouterr().out
+
+
+class _FakeIMAP:
+    """Records how the connection was constructed instead of opening a socket."""
+
+    last = {}
+
+    def __init__(self, host, port, ssl_context=None):
+        _FakeIMAP.last = {"host": host, "port": port, "ssl_context": ssl_context}
+
+    def login(self, user, password):
+        _FakeIMAP.last["login"] = (user, password)
+
+    def starttls(self, ssl_context=None):
+        _FakeIMAP.last["starttls_context"] = ssl_context
+
+
+@pytest.fixture
+def connection_globals(monkeypatch):
+    for name, value in (("IMAP_HOST", "imap.example.com"), ("IMAP_PORT", 993),
+                        ("IMAP_USER", "user"), ("IMAP_PASS", "secret"),
+                        ("VERIFY_TLS", True)):
+        monkeypatch.setattr(labeler, name, value)
+
+
+def test_implicit_tls_passes_a_verifying_context(connection_globals, monkeypatch):
+    monkeypatch.setattr(labeler, "USE_SSL", True)
+    monkeypatch.setattr(imaplib, "IMAP4_SSL", _FakeIMAP)
+    labeler.connect()
+
+    context = _FakeIMAP.last["ssl_context"]
+    assert context is not None, "imaplib would fall back to its unverified default"
+    assert context.check_hostname is True
+    assert context.verify_mode == ssl.CERT_REQUIRED
+
+
+def test_starttls_passes_a_verifying_context(connection_globals, monkeypatch):
+    monkeypatch.setattr(labeler, "USE_SSL", False)
+    monkeypatch.setattr(labeler, "USE_STARTTLS", True)
+    monkeypatch.setattr(imaplib, "IMAP4", _FakeIMAP)
+    labeler.connect()
+
+    context = _FakeIMAP.last["starttls_context"]
+    assert context is not None, "imaplib would fall back to its unverified default"
+    assert context.check_hostname is True
+    assert context.verify_mode == ssl.CERT_REQUIRED

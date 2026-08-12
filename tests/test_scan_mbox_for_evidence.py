@@ -84,3 +84,35 @@ def test_get_body_returns_empty_for_a_bodyless_message():
 
 def test_normalize_collapses_whitespace_without_lowercasing():
     assert scan.normalize("Two\nLines   here") == "Two Lines here"
+
+
+def test_unusual_text_subtypes_are_still_read():
+    """Narrowing to text/plain and text/html would silently skip other text parts.
+
+    Legacy clients emit text/enriched and similar; a scanner that ignores them
+    reports nothing for a message it never actually read.
+    """
+    raw = mb.plain_message(body="Contains an urgent payment request.").split("\n", 1)[1]
+    raw = raw.replace('Content-Type: text/plain', 'Content-Type: text/enriched')
+    msg = message_from_string(raw, policy=policy.default)
+    assert "urgent payment" in scan.get_body(msg)
+
+
+def test_output_defaults_beside_the_input_not_the_working_directory(tmp_path, monkeypatch):
+    """A relative default writes evidence wherever the tool is run from.
+
+    On this workstation that means into a code repository, which the workspace
+    rules forbid and which .gitignore alone cannot be trusted to catch.
+    """
+    archive = tmp_path / "archive.mbox"
+    mb.write_mbox(archive, [mb.plain_message(body="An urgent payment request.")])
+
+    elsewhere = tmp_path / "cwd"
+    elsewhere.mkdir()
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--mbox-file", str(archive)],
+        capture_output=True, text=True, cwd=elsewhere,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "archive_evidence_hits.csv").exists()
+    assert list(elsewhere.iterdir()) == []
