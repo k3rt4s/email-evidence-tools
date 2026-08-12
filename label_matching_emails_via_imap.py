@@ -255,21 +255,58 @@ def wipe_resume_file():
 # LABEL HELPERS
 # =============================
 
+def quote_mailbox(name: str) -> str:
+    """Quote a mailbox name for the wire, since imaplib passes it through as given."""
+    name = name.strip()
+    if name.startswith('"') and name.endswith('"'):
+        return name
+    return '"' + name.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def folder_exists(imap, folder: str) -> bool:
+    """Return True if the server lists the folder."""
+    typ, data = imap.list('""', quote_mailbox(folder))
+    return typ == "OK" and any(item for item in data if item)
+
+
 def ensure_folder(imap, folder: str):
-    """Create the IMAP folder/label if it does not already exist."""
-    try:
-        imap.create(folder)
-    except Exception:
-        pass  # folder already exists
+    """Create the target folder, failing loudly if the server will not have it.
+
+    imaplib returns ('NO', ...) for a refused command rather than raising, so
+    swallowing the result made every later COPY fail into a folder that was
+    never created, while the run still reported the messages as labeled. The
+    usual cause is a server with a required namespace: Proton Bridge, for
+    instance, refuses a bare top-level name and wants Labels/<name> or
+    Folders/<name>.
+    """
+    typ, data = imap.create(quote_mailbox(folder))
+    if typ == "OK" or folder_exists(imap, folder):
+        return
+    detail = b" ".join(item for item in data if item).decode("utf-8", "replace")
+    raise SystemExit(
+        f"Cannot create the target folder {folder!r}: {detail or 'server said NO'}. "
+        "Some servers require a namespace prefix, for example 'Labels/Evidence' "
+        "or 'Folders/Evidence'."
+    )
 
 
 def apply_label(imap, uid: bytes):
-    """Copy a message UID into the TARGET_LABEL folder.
+    """Copy a message UID into the TARGET_LABEL folder, raising if the server refuses.
 
     The caller creates the folder and selects the mailbox once per run; doing
     either here meant an extra round trip to the server for every match.
+
+    The return value has to be checked. A refused COPY comes back as ('NO', ...)
+    rather than an exception, so ignoring it meant the run counted the message as
+    labeled and said so on the way out, having moved nothing.
     """
-    imap.uid("COPY", uid, TARGET_LABEL)
+    typ, data = imap.uid("COPY", uid, quote_mailbox(TARGET_LABEL))
+    if typ != "OK":
+        detail = b" ".join(item for item in data if item).decode("utf-8", "replace")
+        raise RuntimeError(
+            f"Server refused to copy UID {uid.decode() if isinstance(uid, bytes) else uid} "
+            f"into {TARGET_LABEL!r}: {detail or 'server said NO'}"
+        )
 
 # =============================
 # DOMAIN EXTRACTION
@@ -365,7 +402,7 @@ def process_uids(uids: list, resume: bool):
     ensure_folder(imap, TARGET_LABEL)
     imap.select(MAILBOX, readonly=False)
 
-    scanned = matched = 0
+    scanned = matched = skipped = 0
     buffer  = []
     start   = time.time()
 
@@ -376,6 +413,7 @@ def process_uids(uids: list, resume: bool):
 
         res, data = imap.uid("FETCH", uid, "(RFC822)")
         if res != "OK" or not data or not data[0]:
+            skipped += 1
             continue
 
         msg = email.message_from_bytes(data[0][1])
@@ -400,7 +438,13 @@ def process_uids(uids: list, resume: bool):
 
     save_processed_uids(buffer)  # flush remaining buffer
     imap.logout()
-    print(f"Done. Scanned {scanned:,}, labeled {matched:,} as {TARGET_LABEL}")
+    # Report what could not be read as well as what was labeled. A message the
+    # server would not hand over is a gap in the result, and a silent one reads
+    # as "no match" to anyone looking at the totals.
+    summary = f"Done. Scanned {scanned:,}, labeled {matched:,} as {TARGET_LABEL}"
+    if skipped:
+        summary += f", {skipped:,} could not be fetched and were not examined"
+    print(summary)
 
 # =============================
 # MAIN

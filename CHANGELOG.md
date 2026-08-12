@@ -2,6 +2,16 @@
 
 Notable user-facing changes to email-evidence-tools. Newest first.
 
+## 2026-08-12, live verification
+
+Running the live tests against a real mailbox found a silent failure, which is what they were written for.
+
+- `label_matching_emails_via_imap.py` reported labeling messages it had not labeled. `imaplib` returns `('NO', ...)` for a refused command instead of raising, and both the folder creation and the COPY discarded that result, so a server that rejected the folder name produced a run that created nothing, copied nothing, and finished by printing how many messages it had labeled. Against Proton Bridge, which requires a namespace prefix such as `Labels/Evidence` and refuses a bare top-level name, that is the default outcome. Both calls now check the response: an unusable folder name stops the run with a message naming the likely cause, and a refused COPY raises rather than counting as a success.
+- Mailbox names are quoted on the wire. `imaplib` passes them through as given, so a target label containing a space arrived as two arguments.
+- The run summary now reports messages the server would not hand over. They were skipped silently, which reads as "no match" in the totals.
+- Added `tests/test_imap_tls_session.py`, which drives a full labeling session over implicit TLS against a stub server holding an ephemeral certificate. It covers what no live test could without a hosted account: that `--ssl on` completes a session, and that it refuses both an untrusted certificate and a trusted one issued for a different hostname.
+- The live labeling test now deletes the folder it creates, so running it leaves the mailbox as it found it.
+
 ## 2026-08-12, close-out
 
 Closing out the remaining board items.

@@ -10,7 +10,7 @@ Active work board for email-evidence-tools, showing only what is in progress rig
 
 ## In Progress
 
-Nothing active. The project closed out on 2026-08-12: everything on the board shipped, merged to master, and pushed. 64 tests pass on master, plus 6 live tests that skip unless pointed at a real IMAP server; those were run once against the local bridge and passed.
+Nothing active.
 
 ## Questions for Jon
 
@@ -18,8 +18,9 @@ None open.
 
 ## Pending
 
-- Optional: run the one live test that writes. `tests/test_live_imap.py` covers the labeler against the real bridge, but its labelling test stays skipped unless `EET_LIVE_LABEL_TARGET` names a folder it may create, because applying a label copies a message into a real mailbox and the tool has no undo. Everything read-only is proven. Set that variable, run it, and delete the folder afterwards if you want the write path covered too.
-- Optional: prove `--ssl on` against a hosted provider. Implicit TLS is covered by unit tests and by STARTTLS on the bridge, but no test has opened an implicit-TLS session to a server on port 993. Needs an account somewhere other than the local bridge.
+Empty. Everything raised in the 2026-08-12 review shipped, including the live verification: the IMAP labeler has been exercised against the real Proton Bridge for authentication, enumeration, server-side search and labelling, and over implicit TLS against a stub server holding a real certificate. The live tests live in `tests/test_live_imap.py` and skip unless `EET_LIVE_ENV_FILE` points at credentials.
+
+When new work arrives, add it here. Read THEORY.md first: it records the constraints that are not visible in the code, including the two `imaplib` behaviours that have each already caused a silent failure in this tool.
 
 ## Where things live
 
