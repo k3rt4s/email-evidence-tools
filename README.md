@@ -17,10 +17,11 @@ Python utilities for processing, reducing, scanning, and labeling email archives
 - [evidence_text.py](evidence_text.py): Converts HTML email bodies to plain text for rendering and keyword scanning.
 - [extract_messages_by_address.py](extract_messages_by_address.py): Stream-scans one or more mbox archives and extracts every message involving a given address, writing a filtered mbox and index CSV with resume-on-failure support.
 - [label_matching_emails_via_imap.py](label_matching_emails_via_imap.py): Connects to an IMAP mailbox and applies a label or folder to messages whose participant addresses match configured domains.
-- [pytest.ini](pytest.ini)
+- [pytest.ini](pytest.ini): Pytest configuration and test discovery settings.
 - [render_mbox_to_markdown.py](render_mbox_to_markdown.py): Renders an mbox archive as a single chronological Markdown document with forensic headers, plain-text bodies, and a hashed attachment manifest.
 - [requirements-dev.txt](requirements-dev.txt): Pinned development and test dependencies.
 - [requirements.txt](requirements.txt): Pinned runtime Python dependencies.
+- [run_evidence_pipeline.py](run_evidence_pipeline.py): Runs the extract, strip, scan, clean, and render tools as one ordered pipeline over an mbox archive.
 - [scan_mbox_for_evidence.py](scan_mbox_for_evidence.py): Scans an mbox archive for configurable evidence keyword categories and writes one CSV row per matched sentence.
 - [strip_attachments_from_mbox.py](strip_attachments_from_mbox.py): Creates an attachment-free copy of an mbox archive and writes a SHA-256 inventory CSV of every stripped attachment.
 - [THEORY.md](THEORY.md): What a session needs to believe before it changes anything here.
@@ -34,12 +35,30 @@ Python utilities for processing, reducing, scanning, and labeling email archives
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `extract_messages_by_address.py`    | Stream-scans one or more mbox files and extracts every message where a given address (or domain substring) appears in From/To/Cc/Bcc/Reply-To/Sender/Delivered-To. Outputs a filtered mbox + index CSV. Deduped by Message-ID. Byte-offset checkpoint for resume on large archives. |
 | `render_mbox_to_markdown.py`        | Renders an mbox as a chronological Markdown evidence document with full forensic headers, plain-text body, attachment manifest (each file extracted to disk and hashed).                                                                                                            |
-| `scan_mbox_for_evidence.py`         | Scans an mbox file and extracts messages matching configurable evidence keyword categories.                                                                                                                                                                                         |
+| `scan_mbox_for_evidence.py`         | Scans an mbox file's subject lines and message bodies for configurable evidence keyword categories. One row per hit, with a `location` column saying whether it came from the subject or the body.                                                                                  |
+| `run_evidence_pipeline.py`          | Runs extract, strip, scan, clean, and render in order over one archive, wiring each stage's output into the next. `--dry-run` prints the plan, `--skip` leaves stages out.                                                                                                          |
 | `label_matching_emails_via_imap.py` | Connects to an IMAP mailbox and applies a label/folder to messages whose address domains match configured domains.                                                                                                                                                                  |
 | `strip_attachments_from_mbox.py`    | Creates an attachment-free mbox copy and writes an attachment inventory CSV.                                                                                                                                                                                                        |
 | `clean_evidence_csv.py`             | Cleans text fields in evidence CSV output by removing HTML tags and normalizing whitespace.                                                                                                                                                                                         |
 
 ## Usage
+
+The whole sequence, one command:
+
+```bash
+python run_evidence_pipeline.py \
+    --mbox-file "<path-to-export.mbox>" \
+    --address "someone@example.com" \
+    --output-dir "<case-folder>"
+```
+
+Each stage reads what the one before it wrote: strip works on the extract, scan works on the stripped copy, clean works on scan's CSV. Render is the exception and goes back to the extract, because the stripped copy no longer holds the attachments it has to hash. Outputs land in `01_extract`, `02_stripped`, `03_scan` and `04_render` under the case folder.
+
+Add `--dry-run` to see the plan first, or `--skip strip render` to leave stages out. Skipping a stage whose output a later one needs fails immediately rather than partway through. A stage that fails stops the run rather than feeding a half-written file to the next one; fix the cause and re-run the same command, and the checkpointed stages pick up where they stopped.
+
+Point `--output-dir` outside any code checkout. On this workstation that means the data root, never `C:\Code\`.
+
+Or each tool on its own:
 
 ```bash
 python extract_messages_by_address.py --mbox-file "<path-to-export.mbox>" --address "someone@example.com"
@@ -76,6 +95,7 @@ The tools differ in how much of an archive they hold at once, which decides what
 | `scan_mbox_for_evidence.py`         | Uses `mailbox.mbox`, one message body at a time after that.    | None; re-run from the start.                                   |
 | `render_mbox_to_markdown.py`        | Holds every parsed message in memory to sort chronologically.  | None; render the extract, not the full archive.                |
 | `label_matching_emails_via_imap.py` | One message at a time over IMAP.                               | Processed-UID state file, keyed to host, mailbox, and domains. |
+| `run_evidence_pipeline.py`          | Delegates; holds nothing itself.                               | Re-run the same command, each stage resumes as it would alone. |
 
 Run `extract_messages_by_address.py` first on a very large archive and point the rest at its much smaller output.
 
