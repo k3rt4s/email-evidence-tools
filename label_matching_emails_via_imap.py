@@ -165,7 +165,10 @@ def parse_args():
     parser.add_argument("--imap-user", default=os.getenv("IMAP_USER"))
     parser.add_argument("--imap-pass", default=os.getenv("IMAP_PASS"))
     parser.add_argument("--mailbox", default=os.getenv("MAILBOX", '"All Mail"'))
-    parser.add_argument("--target-label", default=os.getenv("TARGET_LABEL", "Labels/Evidence"))
+    parser.add_argument("--target-label", type=str.strip,
+                        default=os.getenv("TARGET_LABEL", "Labels/Evidence").strip(),
+                        help="Folder or label to apply. Many servers need a namespace "
+                             "prefix, for example Labels/Evidence.")
     parser.add_argument(
         "--domains",
         default=os.getenv("TARGET_DOMAINS", ""),
@@ -256,17 +259,44 @@ def wipe_resume_file():
 # =============================
 
 def quote_mailbox(name: str) -> str:
-    """Quote a mailbox name for the wire, since imaplib passes it through as given."""
-    name = name.strip()
-    if name.startswith('"') and name.endswith('"'):
+    """Quote a mailbox name for the wire, since imaplib passes it through as given.
+
+    Whitespace is not trimmed here. A mailbox name is whatever the server says it
+    is, trailing space included, and silently altering it would look for the
+    wrong folder; trimming belongs where the argument is read.
+    """
+    if name.startswith('"') and name.endswith('"') and len(name) > 1:
         return name
     return '"' + name.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def parse_list_mailbox(line: bytes) -> str:
+    """Return the mailbox name from one LIST response line, or "" if it has none.
+
+    A LIST line ends with the mailbox, either quoted or as a bare atom:
+        * LIST (\\HasNoChildren) "/" "Labels/Evidence"
+    """
+    if not line:
+        return ""
+    text = line.decode("utf-8", "replace").rstrip()
+    if text.endswith('"'):
+        opening = text.rfind('"', 0, len(text) - 1)
+        if opening != -1:
+            return text[opening + 1:-1]
+    return text.rsplit(" ", 1)[-1] if " " in text else ""
+
+
 def folder_exists(imap, folder: str) -> bool:
-    """Return True if the server lists the folder."""
+    """Return True if the server lists a mailbox with exactly this name.
+
+    The name has to be compared, not merely counted. A LIST can come back OK
+    with status lines or with near-miss matches, and treating any non-empty
+    response as existence would confirm a folder the server never made.
+    """
     typ, data = imap.list('""', quote_mailbox(folder))
-    return typ == "OK" and any(item for item in data if item)
+    if typ != "OK":
+        return False
+    return any(parse_list_mailbox(line) == folder for line in (data or []))
 
 
 def ensure_folder(imap, folder: str):
@@ -403,6 +433,7 @@ def process_uids(uids: list, resume: bool):
     imap.select(MAILBOX, readonly=False)
 
     scanned = matched = skipped = 0
+    skipped_uids = []
     buffer  = []
     start   = time.time()
 
@@ -414,6 +445,8 @@ def process_uids(uids: list, resume: bool):
         res, data = imap.uid("FETCH", uid, "(RFC822)")
         if res != "OK" or not data or not data[0]:
             skipped += 1
+            if len(skipped_uids) < 20:
+                skipped_uids.append(uid)
             continue
 
         msg = email.message_from_bytes(data[0][1])
@@ -445,6 +478,11 @@ def process_uids(uids: list, resume: bool):
     if skipped:
         summary += f", {skipped:,} could not be fetched and were not examined"
     print(summary)
+    if skipped_uids:
+        # Name them, so a gap can be re-checked rather than only counted.
+        shown = ", ".join(skipped_uids)
+        more = "" if skipped <= len(skipped_uids) else f" (first {len(skipped_uids)} of {skipped:,})"
+        print(f"Unfetched UIDs{more}: {shown}")
 
 # =============================
 # MAIN

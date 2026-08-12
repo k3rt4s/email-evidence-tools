@@ -131,6 +131,32 @@ def test_a_refused_copy_stops_the_run(session):
             labeler.process_uids(labeler.fetch_uids_full(), resume=False)
 
 
+def test_a_near_miss_listing_does_not_confirm_the_folder(session):
+    """Existence is decided by comparing the name, not by the response being non-empty.
+
+    A server can answer a LIST with entries the client did not ask for. Counting
+    lines instead of matching names would confirm a folder the server refused to
+    create, and the run would then copy into nothing.
+    """
+    messages = {1: message("hit", to="person@target.test")}
+    with StubIMAPServer(messages, refuse=("CREATE",),
+                        list_extra=("Labels/Evidence Archive", "Labels/Evidenc")) as server:
+        session(server, {"target.test"}, label="Labels/Evidence")
+        with pytest.raises(SystemExit):
+            labeler.process_uids(labeler.fetch_uids_full(), resume=False)
+
+
+def test_an_existing_folder_is_accepted_when_creation_is_refused(session):
+    """A server that refuses CREATE because the folder is already there is fine."""
+    messages = {1: message("hit", to="person@target.test")}
+    with StubIMAPServer(messages, refuse=("CREATE",),
+                        list_extra=("Labels/Evidence",)) as server:
+        session(server, {"target.test"}, label="Labels/Evidence")
+        labeler.process_uids(labeler.fetch_uids_full(), resume=False)
+
+        assert [uid for uid, _ in server.copied] == ["1"]
+
+
 def test_mailbox_names_are_quoted_on_the_wire(session):
     """An unquoted name with a space in it is parsed by the server as two arguments."""
     messages = {1: message("hit", to="person@target.test")}
