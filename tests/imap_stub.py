@@ -28,7 +28,8 @@ def _redact(line: str) -> str:
 class StubIMAPServer:
     """A one-connection IMAP server backed by a dict of {uid: raw message bytes}."""
 
-    def __init__(self, messages, search_results=None, ssl_context=None, refuse=()):
+    def __init__(self, messages, search_results=None, ssl_context=None, refuse=(),
+                 list_extra=()):
         # When ssl_context is given the listener speaks implicit TLS, which is
         # what a server on port 993 does and what --ssl on connects to.
         self.ssl_context = ssl_context
@@ -37,6 +38,8 @@ class StubIMAPServer:
         # fails. imaplib returns NO to the caller instead of raising, which is
         # exactly how a refusal gets mistaken for success.
         self.refuse = {c.upper() for c in refuse}
+        # Mailbox names LIST reports in addition to the created ones.
+        self.list_extra = list(list_extra)
         self.messages = {str(k): v.encode() if isinstance(v, str) else v
                          for k, v in messages.items()}
         # UIDs returned for a SEARCH, defaulting to every message held.
@@ -123,9 +126,11 @@ class StubIMAPServer:
             send(f"{tag} OK CREATE completed")
         elif command == "LIST":
             # Only folders that were actually created are listed, so a client
-            # cannot confirm a folder the server refused to make.
-            for name in self.created:
-                send(f'* LIST () "/" "{name}"')
+            # cannot confirm a folder the server refused to make. `list_extra`
+            # lets a test add names the client did not ask for, which is what a
+            # server answering a pattern loosely looks like.
+            for name in list(self.created) + list(self.list_extra):
+                send(f'* LIST (\\HasNoChildren) "/" "{name}"')
             send(f"{tag} OK LIST completed")
         elif command == "UID":
             return self._dispatch_uid(send, tag, args)

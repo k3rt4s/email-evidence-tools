@@ -5,6 +5,10 @@ bridge covers STARTTLS. Neither opens an implicit-TLS session, which is what
 `--ssl on` uses against a hosted provider on port 993. These tests do, with an
 ephemeral certificate generated for the run, so both the success path and the
 rejection path are exercised without an account anywhere.
+
+The generated key and certificate are written under pytest's temp directory.
+They are self-signed, valid for one day, and issued for localhost, so they
+authorize nothing outside the test run.
 """
 
 import datetime
