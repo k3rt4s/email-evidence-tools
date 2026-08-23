@@ -16,6 +16,7 @@ Python utilities for processing, reducing, scanning, and labeling email archives
 - [clean_evidence_csv.py](clean_evidence_csv.py): Strips HTML tags and normalizes whitespace in evidence CSV files produced by scan_mbox_for_evidence.py.
 - [evidence_text.py](evidence_text.py): Converts HTML email bodies to plain text for rendering and keyword scanning.
 - [extract_messages_by_address.py](extract_messages_by_address.py): Stream-scans one or more mbox archives and extracts every message involving a given address, writing a filtered mbox and index CSV with resume-on-failure support.
+- [FUTURE_FEATURES.md](FUTURE_FEATURES.md): Backlog of candidate features not yet scheduled.
 - [label_matching_emails_via_imap.py](label_matching_emails_via_imap.py): Connects to an IMAP mailbox and applies a label or folder to messages whose participant addresses match configured domains.
 - [pytest.ini](pytest.ini): Pytest configuration and test discovery settings.
 - [render_mbox_to_markdown.py](render_mbox_to_markdown.py): Renders an mbox archive as a single chronological Markdown document with forensic headers, plain-text bodies, and a hashed attachment manifest.
