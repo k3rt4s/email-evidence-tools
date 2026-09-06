@@ -2,6 +2,10 @@
 
 Notable user-facing changes to email-evidence-tools. Newest first.
 
+## 2026-09-06, board scored
+
+- The board and the backlog were scored with `ai_development/docs/board-scoring.md`. `FUTURE_FEATURES.md` gained a Scored index carrying one bullet per unshipped feature with its `score:` and `return:` blocks, and the shipped-work record moved off the board's Pending section into Standing notes so the live sections hold only work. The review is at `C:\Code_data\email-evidence-toolsoard_review_2026-09-06.md`.
+
 ## 2026-08-12, live verification
 
 Running the live tests against a real mailbox found a silent failure, which is what they were written for.

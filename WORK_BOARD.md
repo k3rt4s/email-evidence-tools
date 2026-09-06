@@ -18,9 +18,23 @@ None open.
 
 ## Pending
 
-Empty. Everything raised in the 2026-08-12 review shipped, including the live verification: the IMAP labeler has been exercised against the real Proton Bridge for authentication, enumeration, server-side search and labelling, and over implicit TLS against a stub server holding a real certificate. The live tests live in `tests/test_live_imap.py` and skip unless `EET_LIVE_ENV_FILE` points at credentials.
+Empty. When new work arrives, add it here as a bullet carrying a `score:` and a `return:` block per
+`ai_development/docs/board-scoring.md`, and score it before proposing an order.
 
-When new work arrives, add it here. Read THEORY.md first: it records the constraints that are not visible in the code, including the two `imaplib` behaviours that have each already caused a silent failure in this tool.
+## Standing notes
+
+Records and reading rules for this board, not items. `ai_development/scripts/score_board.py` reads the
+live sections and lists every entry there that has no score block, so a record belongs here, where the
+script does not look. An entry that turns back into work moves up to Pending with a block.
+
+- Everything raised in the 2026-08-12 review shipped, including the live verification: the IMAP labeler
+  has been exercised against the real Proton Bridge for authentication, enumeration, server-side search
+  and labelling, and over implicit TLS against a stub server holding a real certificate. The live tests
+  live in `tests/test_live_imap.py` and skip unless `EET_LIVE_ENV_FILE` points at credentials.
+- Read THEORY.md before changing anything: it records the constraints that are not visible in the code,
+  including the two `imaplib` behaviours that have each already caused a silent failure in this tool.
+- The candidate features live in `FUTURE_FEATURES.md` under its Scored index, scored the same way.
+  Nothing moves from there to Pending except on Jon's say-so.
 
 ## Where things live
 
