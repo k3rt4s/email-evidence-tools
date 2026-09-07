@@ -10,7 +10,7 @@ board loses its bullet here on the day it moves.
 
 The index is empty today. Its one entry, transport-headers, moved onto the board on
 2026-09-06 as Group 1 and is scored there, at
-`C:\Code\projects\email-evidence-tools\WORK_BOARD.md`. It is not scored in both places,
+`<workspace_root>\projects\email-evidence-tools\WORK_BOARD.md`. It is not scored in both places,
 because the scorer reads both files and would otherwise count it twice.
 
 ## Ingested 2026-08-21: public talk and summit digests
