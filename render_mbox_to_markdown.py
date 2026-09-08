@@ -181,6 +181,22 @@ def header_str(msg, name) -> str:
     return " ".join(str(v).replace("\r\n", " ").replace("\n", " ").strip() for v in vals)
 
 
+def header_values(msg, name) -> list[str]:
+    vals = msg.get_all(name, [])
+    return [str(v).replace("\r\n", " ").replace("\n", " ").strip() for v in vals]
+
+
+def transport_headers(msg) -> dict[str, object]:
+    received = header_values(msg, "Received")
+    dkim_signatures = header_values(msg, "DKIM-Signature")
+    return {
+        "return_path": header_str(msg, "Return-Path"),
+        "auth_results": header_str(msg, "Authentication-Results"),
+        "received": received,
+        "dkim_signatures": dkim_signatures,
+    }
+
+
 def addrs_list(msg, *headers):
     raw = []
     for h in headers:
@@ -285,6 +301,7 @@ def main():
         cw.writerow([
             "n", "date_utc", "date_raw", "from", "to", "cc", "subject",
             "message_id", "raw_sha256", "attachment_count",
+            "received_count", "return_path", "auth_results",
         ])
 
         md.write(f"# {title}\n\n")
@@ -350,6 +367,9 @@ def main():
         "messages_undated": len(undated),
         "parse_errors": len(parse_errors),
         "attachments_total": total_attachments,
+        "messages_with_received": sum(1 for r in records if header_values(r["msg"], "Received")),
+        "messages_with_auth_results": sum(1 for r in records if header_values(r["msg"], "Authentication-Results")),
+        "messages_with_dkim_signature": sum(1 for r in records if header_values(r["msg"], "DKIM-Signature")),
         "date_range_utc": (
             [dated[0]["date_utc"].isoformat(), dated[-1]["date_utc"].isoformat()]
             if dated else None
@@ -378,6 +398,7 @@ def write_message(md, cw, n, n_str, rec, att_dir: Path):
     in_reply_to = header_str(msg, "In-Reply-To")
     references  = header_str(msg, "References")
     mime_v      = header_str(msg, "MIME-Version")
+    transport   = transport_headers(msg)
 
     body, body_source = extract_body(msg)
 
@@ -418,6 +439,22 @@ def write_message(md, cw, n, n_str, rec, att_dir: Path):
     md.write(f"raw_size_bytes: {rec['raw_size']}\n")
     md.write(f"raw_sha256:     {rec['raw_sha256']}\n")
     md.write(f"body_source:    {body_source}\n")
+    has_transport = (
+        transport["return_path"]
+        or transport["auth_results"]
+        or transport["received"]
+        or transport["dkim_signatures"]
+    )
+    if has_transport:
+        if transport["return_path"]:
+            md.write(f"{'return_path:':<16}{transport['return_path']}\n")
+        if transport["auth_results"]:
+            md.write(f"{'auth_results:':<16}{transport['auth_results']}\n")
+        md.write(f"{'received_count:':<16}{len(transport['received'])}\n")
+        for i, value in enumerate(transport["received"], start=1):
+            md.write(f"{f'received_{i}:':<16}{value}\n")
+        for i, value in enumerate(transport["dkim_signatures"], start=1):
+            md.write(f"dkim_signature_{i}: {value}\n")
     md.write("```\n\n")
 
     md.write("**Body**\n\n")
@@ -447,6 +484,7 @@ def write_message(md, cw, n, n_str, rec, att_dir: Path):
     cw.writerow([
         n_str, date_iso, rec["date_raw"], from_, to_, cc_,
         subject, message_id, rec["raw_sha256"], len(att_rows),
+        len(transport["received"]), transport["return_path"], transport["auth_results"],
     ])
 
 
