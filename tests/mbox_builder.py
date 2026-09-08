@@ -68,6 +68,41 @@ Content-Transfer-Encoding: base64
 """
 
 
+def transport_message(mid="transport", subject="Transport headers", body="Transport body.",
+                      date="Mon, 05 Jan 2026 09:00:00 +0000",
+                      received_1=None, received_2=None, return_path="<a@example.com>",
+                      auth_results=None, dkim_signature=None):
+    """A single-part text/plain message carrying transport headers."""
+    received_1 = received_1 or (
+        "from mx2.example.net (mx2.example.net [203.0.113.9]) "
+        "by mail.example.org with ESMTPS id abc123; Mon, 05 Jan 2026 09:00:04 +0000"
+    )
+    received_2 = received_2 or (
+        "from sender.example.com (sender.example.com [198.51.100.7]) "
+        "by mx2.example.net with ESMTP id def456; Mon, 05 Jan 2026 09:00:01 +0000"
+    )
+    auth_results = auth_results or (
+        "mx2.example.net; spf=pass smtp.mailfrom=example.com; "
+        "dkim=pass header.d=example.com"
+    )
+    dkim_signature = dkim_signature or "v=1; a=rsa-sha256; d=example.com; s=sel; bh=AAAA; b=BBBB"
+    return f"""{SEPARATOR}
+Message-ID: <{mid}@example.com>
+Date: {date}
+Received: {received_1}
+Received: {received_2}
+Return-Path: {return_path}
+Authentication-Results: {auth_results}
+DKIM-Signature: {dkim_signature}
+From: a@example.com
+To: b@example.com
+Subject: {subject}
+Content-Type: text/plain; charset="utf-8"
+
+{body}
+"""
+
+
 def nested_message(mid="nested", filename="nested.bin", payload=b"nested-bytes",
                    date="Thu, 08 Jan 2026 09:00:00 +0000"):
     """multipart/mixed wrapping a multipart/alternative, plus an attachment."""

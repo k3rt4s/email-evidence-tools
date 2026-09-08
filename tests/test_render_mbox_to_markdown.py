@@ -1,5 +1,6 @@
 """Covers the rendered evidence document produced by render_mbox_to_markdown.py."""
 
+import csv
 import hashlib
 import json
 import subprocess
@@ -63,6 +64,54 @@ def test_manifest_records_source_hash_and_counts(tmp_path):
     assert manifest["attachments_total"] == 1
     assert manifest["parse_errors"] == 0
     assert manifest["input_mbox_sha256"] == hashlib.sha256(mbox.read_bytes()).hexdigest()
+
+
+def test_transport_header_chain_is_rendered_and_counted(tmp_path):
+    mbox = mb.write_mbox(tmp_path / "in.mbox", [
+        mb.transport_message(),
+        mb.plain_message(mid="plain-no-transport", subject="Plain no transport"),
+    ])
+    out_dir = tmp_path / "out"
+    md = run_render(mbox, out_dir)
+
+    received_1 = (
+        "from mx2.example.net (mx2.example.net [203.0.113.9]) "
+        "by mail.example.org with ESMTPS id abc123; Mon, 05 Jan 2026 09:00:04 +0000"
+    )
+    received_2 = (
+        "from sender.example.com (sender.example.com [198.51.100.7]) "
+        "by mx2.example.net with ESMTP id def456; Mon, 05 Jan 2026 09:00:01 +0000"
+    )
+    auth_results = (
+        "mx2.example.net; spf=pass smtp.mailfrom=example.com; "
+        "dkim=pass header.d=example.com"
+    )
+    dkim_signature = "v=1; a=rsa-sha256; d=example.com; s=sel; bh=AAAA; b=BBBB"
+
+    assert "received_count: 2" in md
+    assert f"received_1:     {received_1}" in md
+    assert f"received_2:     {received_2}" in md
+    assert md.index(received_1) < md.index(received_2)
+    assert "return_path:    <a@example.com>" in md
+    assert f"auth_results:   {auth_results}" in md
+    assert f"dkim_signature_1: {dkim_signature}" in md
+
+    plain_block = md.split("Plain no transport", 1)[1].split("```", 2)[1]
+    assert "received_" not in plain_block
+    assert "return_path" not in plain_block
+    assert "auth_results" not in plain_block
+    assert "dkim_signature" not in plain_block
+
+    with (out_dir / "in_messages.csv").open(newline="", encoding="utf-8") as f:
+        rows = list(csv.reader(f))
+    by_subject = {row[6]: row for row in rows[1:]}
+    assert by_subject["Transport headers"][-3:] == ["2", "<a@example.com>", auth_results]
+    assert by_subject["Plain no transport"][-3:] == ["0", "", ""]
+
+    manifest = json.loads((out_dir / "render_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["messages_with_received"] == 1
+    assert manifest["messages_with_auth_results"] == 1
+    assert manifest["messages_with_dkim_signature"] == 1
 
 
 def test_undated_messages_are_appended_not_dropped(tmp_path):
