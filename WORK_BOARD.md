@@ -1,5 +1,8 @@
 # Project Board: email-evidence-tools
 
+ACTIVE THREAD: Claude 2026-09-06 (Group 1, transport headers; worktree only, master untouched)
+ACTIVE THREAD: Claude 2026-09-06 (Group 2, THEORY re-check; worktree only, master untouched)
+
 Active work board for email-evidence-tools, showing only what is in progress right now; shipped work lives in CHANGELOG.md and the working mental model in THEORY.md.
 
 ## Status values
