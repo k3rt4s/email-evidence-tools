@@ -2,6 +2,10 @@
 
 Notable user-facing changes to email-evidence-tools. Newest first.
 
+## 2026-09-08, board scored
+
+- The board and backlog were checked with `ai_development/docs/board-scoring.md`; no scored items remain. The review is at `<data_root>\email-evidence-tools\board_review_2026-09-08.md`.
+
 ## 2026-09-06, board scored
 
 - The board was scored again after the first pass. The one backlog feature moved from the `FUTURE_FEATURES.md` Scored index onto the board, a second item was found and scored, `THEORY.md` asserting the scanner reads bodies only when it has scanned subject lines since commit 95ce9da, and both items were grouped into two independent run groups carrying the goal, the files and line numbers, the current and wanted behaviour with a worked example, the test that proves it, the scope limits, the definition of done and the rollback. The board gained a Standing rules for a run group section holding the rules both groups inherit. No code changed. The review is at `<data_root>\email-evidence-tools\board_review_2026-09-06.md` and the two launch prompts beside it.
