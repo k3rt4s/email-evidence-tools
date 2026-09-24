@@ -26,7 +26,6 @@ Python utilities for processing, reducing, scanning, and labeling email archives
 - [scan_mbox_for_evidence.py](scan_mbox_for_evidence.py): Scans an mbox archive for configurable evidence keyword categories and writes one CSV row per matched sentence.
 - [strip_attachments_from_mbox.py](strip_attachments_from_mbox.py): Creates an attachment-free copy of an mbox archive and writes a SHA-256 inventory CSV of every stripped attachment.
 - [THEORY.md](THEORY.md): What a session needs to believe before it changes anything here.
-- [WORK_BOARD.md](WORK_BOARD.md): Active work board for email-evidence-tools, showing only what is in progress right now; shipped work lives in CHANGELOG.md and the working mental model in THEORY.md.
 
 <!-- END CONTENTS -->
 
@@ -35,7 +34,7 @@ Python utilities for processing, reducing, scanning, and labeling email archives
 | Script                              | Purpose                                                                                                                                                                                                                                                                             |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `extract_messages_by_address.py`    | Stream-scans one or more mbox files and extracts every message where a given address (or domain substring) appears in From/To/Cc/Bcc/Reply-To/Sender/Delivered-To. Outputs a filtered mbox + index CSV. Deduped by Message-ID. Byte-offset checkpoint for resume on large archives. |
-| `render_mbox_to_markdown.py`        | Renders an mbox as a chronological Markdown evidence document with full forensic headers, transport headers, plain-text body, attachment manifest (each file extracted to disk and hashed).                                                                                            |
+| `render_mbox_to_markdown.py`        | Renders an mbox as a chronological Markdown evidence document with full forensic headers, transport headers, plain-text body, attachment manifest (each file extracted to disk and hashed).                                                                                         |
 | `scan_mbox_for_evidence.py`         | Scans an mbox file's subject lines and message bodies for configurable evidence keyword categories. One row per hit, with a `location` column saying whether it came from the subject or the body.                                                                                  |
 | `run_evidence_pipeline.py`          | Runs extract, strip, scan, clean, and render in order over one archive, wiring each stage's output into the next. `--dry-run` prints the plan, `--skip` leaves stages out.                                                                                                          |
 | `label_matching_emails_via_imap.py` | Connects to an IMAP mailbox and applies a label/folder to messages whose address domains match configured domains.                                                                                                                                                                  |
@@ -132,6 +131,7 @@ These tools operate on user-provided email archives that may contain PII, creden
 - Do not commit mbox files, generated CSVs, attachment inventories, checkpoints, or `.env` files. The included `.gitignore` excludes these.
 - Pass inputs and outputs through command-line arguments or environment variables; never hard-code addresses, domains, or labels into the scripts.
 - For long-running jobs against large archives, output to a directory outside the repository so accidental commits cannot leak data.
+- The active work board lives outside this public repo, at `C:\Code_data\email-evidence-tools\WORK_BOARD.md`, since it can name real cases and clients.
 
 ## Structure
 
@@ -152,6 +152,5 @@ email-evidence-tools/
 ├── LICENSE
 ├── CHANGELOG.md
 ├── THEORY.md
-├── WORK_BOARD.md
 └── README.md
 ```
