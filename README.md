@@ -131,7 +131,7 @@ These tools operate on user-provided email archives that may contain PII, creden
 - Do not commit mbox files, generated CSVs, attachment inventories, checkpoints, or `.env` files. The included `.gitignore` excludes these.
 - Pass inputs and outputs through command-line arguments or environment variables; never hard-code addresses, domains, or labels into the scripts.
 - For long-running jobs against large archives, output to a directory outside the repository so accidental commits cannot leak data.
-- The active work board lives outside this public repo, at `C:\Code_data\email-evidence-tools\WORK_BOARD.md`, since it can name real cases and clients.
+- The active work board lives outside this public repo, at `<data_root>\email-evidence-tools\WORK_BOARD.md`, since it can name real cases and clients.
 
 ## Structure
 
