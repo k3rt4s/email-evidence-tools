@@ -2,6 +2,19 @@
 
 Notable user-facing changes to email-evidence-tools. Newest first.
 
+## 2026-09-24, work board moved off the public repo
+
+- `WORK_BOARD.md` was committed and published in this public repo, so it could name real cases and
+  clients. Per the board-location rule in `ai_development/docs/workspace-rules.md`, it now lives only
+  at `<data_root>\email-evidence-tools\WORK_BOARD.md`; the copy was verified against the tracked file
+  before the tracked one was removed. README.md and FUTURE_FEATURES.md point at the new location, and
+  `WORK_BOARD.md` is now gitignored so a future commit cannot re-add a local copy by accident.
+- The file's full public git history (12 commits, 2026-08-11 through 2026-09-24) was reviewed for
+  real people's names, clients, case detail, third-party judgments, and credentials. Nothing in any
+  of the five categories was found; the board only ever held internal engineering and test-plan
+  content. The review is at `<data_root>\email-evidence-tools\history_review_2026-09-24.md`. History
+  was not rewritten; Jon decides from that file whether one is warranted.
+
 ## 2026-09-08, board scored
 
 - The board and backlog were checked with `ai_development/docs/board-scoring.md`; no scored items remain. The review is at `<data_root>\email-evidence-tools\board_review_2026-09-08.md`.
