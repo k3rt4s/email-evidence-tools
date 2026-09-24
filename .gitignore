@@ -3,6 +3,9 @@
 .venv/
 venv/
 
+# Work board lives at the data root, not in this public repo
+WORK_BOARD.md
+
 # Generated evidence outputs
 *.mbox
 *_NO_ATTACHMENTS
