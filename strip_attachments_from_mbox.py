@@ -7,6 +7,9 @@ Purpose : Creates a clean, attachment-free copy of an mbox archive for faster sc
           and smaller file sizes.  For every message, any part with a Content-Disposition
           of "attachment" or a recognized filename is removed; the remaining text/inline
           parts are preserved, along with the MIME container structure around them.
+          A message that is not multipart but whose entire body is itself an attachment
+          is inventoried the same way, and its body is replaced with a one-line
+          text/plain placeholder recording the filename, size, and SHA-256 hash.
           A separate CSV inventory of all stripped attachments (filename, size, SHA-256
           hash, message metadata) is written for the record.
 
@@ -38,6 +41,7 @@ from pathlib import Path
 from email.parser import BytesParser
 from email.generator import BytesGenerator
 from email import policy
+from email.charset import Charset
 from io import BytesIO
 
 RETRY_DELAY    = 5    # seconds to wait when a drive I/O error occurs
@@ -110,6 +114,24 @@ def save_checkpoint(index: int, mbox_bytes: int, csv_bytes: int):
     )
 
 
+# body_encoding None sends the placeholder as 7bit or 8bit, one unwrapped line,
+# so a SHA-256 copied from the inventory greps straight to its message.
+PLACEHOLDER_CHARSET = Charset("utf-8")
+PLACEHOLDER_CHARSET.body_encoding = None
+
+
+def declares_text(part) -> bool:
+    """Return True when the part's own Content-Type header names a text/* type.
+
+    compat32 reports text/plain for a missing or invalid Content-Type, so
+    get_content_maintype() alone would exempt an undeclared attachment.
+    """
+    declared = part.get("Content-Type")
+    if declared is None:
+        return False
+    return str(declared).split(";", 1)[0].strip().lower().startswith("text/")
+
+
 def is_attachment_part(part) -> bool:
     """
     Return True if this MIME part should be treated as an attachment.
@@ -117,14 +139,41 @@ def is_attachment_part(part) -> bool:
     Attachment detection is intentionally broad: some email clients mark
     attachments as 'inline' but still include a filename, so we check both
     Content-Disposition and the presence of a filename parameter.
+
+    Content-Disposition is read through str() because a raw 8-bit header under
+    the compat32 policy parses to a Header object, not a plain str, and
+    calling .lower() on that directly raises AttributeError.
     """
-    disp     = (part.get("Content-Disposition") or "").lower()
-    filename = part.get_filename()
+    disp_header = part.get("Content-Disposition")
+    disp        = str(disp_header).lower() if disp_header is not None else ""
+    filename    = part.get_filename()
     if "attachment" in disp:
         return True
     if filename:
         return True
     return False
+
+
+def escape_placeholder_filename(filename: str) -> str:
+    """Escape characters in a filename that could break out of the placeholder body.
+
+    Only the placeholder text is escaped; the inventory CSV keeps the filename
+    exactly as the message declared it, since that is the evidence record.
+    """
+    escaped = []
+    for ch in filename:
+        code = ord(ch)
+        if ch == "\r":
+            escaped.append("\\r")
+        elif ch == "\n":
+            escaped.append("\\n")
+        elif ch == "]":
+            escaped.append("\\]")
+        elif code < 0x20 or code == 0x7f:
+            escaped.append(f"\\x{code:02x}")
+        else:
+            escaped.append(ch)
+    return "".join(escaped)
 
 
 def prune_attachments(part, record) -> bool:
@@ -258,6 +307,38 @@ if __name__ == "__main__":
 
             if parsed.is_multipart():
                 prune_attachments(parsed, record)
+            elif not declares_text(parsed) and is_attachment_part(parsed):
+                # A single-part message that is itself the attachment: no container to
+                # prune, so record it exactly like a pruned part, then swap its body for
+                # a placeholder rather than dropping the message from the archive.
+                # A single-part text/* message with a filename param (e.g. a
+                # text/plain part someone named) is exempt and passes through
+                # untouched, exactly as it does on master.
+                record(parsed)
+                row = pending_rows[-1]
+                safe_filename = escape_placeholder_filename(row["Filename"] or "unnamed")
+                placeholder = (
+                    f"[attachment removed: {safe_filename}, "
+                    f"{row['Size']} bytes, sha256 {row['SHA256']}]\n"
+                )
+                if "Content-Disposition" in parsed:
+                    del parsed["Content-Disposition"]
+                if "Content-Transfer-Encoding" in parsed:
+                    del parsed["Content-Transfer-Encoding"]
+                if "Content-MD5" in parsed:
+                    del parsed["Content-MD5"]
+                # Delete every Content-Type header, not just the first, so a
+                # malformed source message with duplicates does not leave a
+                # stale one behind for a downstream parser to prefer.
+                del parsed["Content-Type"]
+                parsed["Content-Type"] = "text/plain"
+                # The charset argument encodes the placeholder as utf-8 and sets a
+                # matching Content-Transfer-Encoding. Setting the payload as a bare
+                # str encodes it as ascii by default and raises UnicodeEncodeError
+                # the moment a filename in the placeholder is not ASCII. The
+                # charset's body_encoding (see PLACEHOLDER_CHARSET) keeps the
+                # placeholder readable to anyone opening the stripped mbox as text.
+                parsed.set_payload(placeholder, PLACEHOLDER_CHARSET)
 
             # Serialize with minimal rewriting, then write the mbox separator + message
             buffer = BytesIO()
