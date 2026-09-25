@@ -249,7 +249,14 @@ def test_exception_mid_stage_still_writes_an_incomplete_record(tmp_path, monkeyp
     record = json.loads(custody_files[0].read_text(encoding="utf-8"))
     assert record["status"] == "incomplete"
     assert record["interrupted"] is not None and "OSError" in record["interrupted"]
-    assert record["stages_run"] == ["extract"]
+    # The cut-short stage is named as failed_stage and still appears in
+    # stages_run (with exit_code None), rather than being silently dropped.
+    assert record["stages_run"] == ["extract", "strip"]
+    assert record["failed_stage"] == "strip"
+    strip_result = record["stage_results"][-1]
+    assert strip_result["stage"] == "strip"
+    assert strip_result["exit_code"] is None
+    assert strip_result.get("interrupted") is True
 
 
 def test_pre_existing_and_new_outputs_are_tagged_by_origin(tmp_path):
@@ -315,3 +322,176 @@ def test_write_custody_stamp_collision_gets_a_suffixed_file(tmp_path):
     assert first.exists() and second.exists()
     assert json.loads(first.read_text(encoding="utf-8"))["n"] == 1
     assert json.loads(second.read_text(encoding="utf-8"))["n"] == 2
+
+
+def test_keyboard_interrupt_mid_stage_writes_incomplete_record_and_reraises(tmp_path, monkeypatch):
+    """A Ctrl-C during a stage must not come out as some other exception, and
+    the record it leaves must name the stage that was cut short."""
+    archive = case_archive(tmp_path)
+    out = tmp_path / "case"
+    argv = ["run_evidence_pipeline.py", "--mbox-file", str(archive),
+            "--address", "target@example.org", "--output-dir", str(out)]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    real_run = rep.subprocess.run
+
+    def fake_run(command, *a, **kw):
+        if any("strip_attachments_from_mbox.py" in str(part) for part in command):
+            raise KeyboardInterrupt
+        return real_run(command, *a, **kw)
+
+    monkeypatch.setattr(rep.subprocess, "run", fake_run)
+
+    with pytest.raises(KeyboardInterrupt):
+        rep.main()
+
+    custody_files = _custody_files(out)
+    assert len(custody_files) == 1
+    record = json.loads(custody_files[0].read_text(encoding="utf-8"))
+    assert record["status"] == "incomplete"
+    assert record["failed_stage"] == "strip"
+    assert record["stages_run"] == ["extract", "strip"]
+    strip_result = record["stage_results"][-1]
+    assert strip_result["stage"] == "strip"
+    assert strip_result["exit_code"] is None
+    assert strip_result.get("interrupted") is True
+
+
+def test_write_custody_failure_on_failed_stage_still_returns_stage_rc(tmp_path, monkeypatch):
+    """A custody write failure must never mask a stage's own failure exit code."""
+    archive = case_archive(tmp_path)
+
+    baseline_out = tmp_path / "baseline"
+    (baseline_out / "01_extract").mkdir(parents=True)
+    (baseline_out / "01_extract" / "target.mbox").mkdir()
+    baseline_result = run_pipeline(["--mbox-file", str(archive), "--address", "target@example.org",
+                                    "--output-dir", str(baseline_out), "--skip", "extract"],
+                                   expect_success=False)
+    expected_rc = baseline_result.returncode
+
+    out = tmp_path / "case"
+    (out / "01_extract").mkdir(parents=True)
+    (out / "01_extract" / "target.mbox").mkdir()
+    argv = ["run_evidence_pipeline.py", "--mbox-file", str(archive),
+            "--address", "target@example.org", "--output-dir", str(out), "--skip", "extract"]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    def boom(*a, **kw):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(rep, "write_custody", boom)
+
+    rc = rep.main()
+
+    assert rc == expected_rc
+    assert rc != 3
+    log = (out / "pipeline.log").read_text(encoding="utf-8")
+    assert "custody record could not be written" in log
+    assert not list(out.glob("custody_*.json"))
+
+
+def test_write_custody_failure_during_keyboard_interrupt_still_reraises(tmp_path, monkeypatch):
+    """A second failure (writing the record) must never swallow the first
+    (the interrupt) or turn it into something else."""
+    archive = case_archive(tmp_path)
+    out = tmp_path / "case"
+    argv = ["run_evidence_pipeline.py", "--mbox-file", str(archive),
+            "--address", "target@example.org", "--output-dir", str(out)]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    real_run = rep.subprocess.run
+
+    def fake_run(command, *a, **kw):
+        if any("strip_attachments_from_mbox.py" in str(part) for part in command):
+            raise KeyboardInterrupt
+        return real_run(command, *a, **kw)
+
+    monkeypatch.setattr(rep.subprocess, "run", fake_run)
+
+    def boom(*a, **kw):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(rep, "write_custody", boom)
+
+    with pytest.raises(KeyboardInterrupt):
+        rep.main()
+
+    log = (out / "pipeline.log").read_text(encoding="utf-8")
+    assert "custody record could not be written" in log
+    assert not list(out.glob("custody_*.json"))
+
+
+def test_write_custody_failure_on_clean_run_returns_3(tmp_path, monkeypatch):
+    """A run that otherwise succeeded but left no provable record must not
+    report success: exit code 3 marks it, never 0."""
+    archive = case_archive(tmp_path)
+    out = tmp_path / "case"
+    argv = ["run_evidence_pipeline.py", "--mbox-file", str(archive),
+            "--address", "target@example.org", "--output-dir", str(out)]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    def boom(*a, **kw):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(rep, "write_custody", boom)
+
+    rc = rep.main()
+
+    assert rc == 3
+    log = (out / "pipeline.log").read_text(encoding="utf-8")
+    assert "custody record could not be written" in log
+    assert not list(out.glob("custody_*.json"))
+
+
+def test_missing_and_real_source_end_to_end(tmp_path):
+    archive = case_archive(tmp_path)
+    missing = tmp_path / "does_not_exist.mbox"
+    out = tmp_path / "case"
+    run_pipeline(["--mbox-file", str(missing), str(archive), "--address", "target@example.org",
+                 "--output-dir", str(out)])
+
+    record = json.loads(_custody_files(out)[0].read_text(encoding="utf-8"))
+    assert record["status"] == "complete"
+    sources_by_path = {s["path"]: s for s in record["sources"]}
+    assert sources_by_path[str(missing)]["error"] == "missing"
+    assert sources_by_path[str(missing)]["sha256"] is None
+    assert sources_by_path[str(archive)]["sha256"] is not None
+    assert sources_by_path[str(archive)].get("error") is None
+
+
+def test_write_custody_failure_leaves_no_tmp_or_empty_json(tmp_path, monkeypatch):
+    """A failure between reserving the final name and completing the write
+    must not leave the reserved zero-byte file, or the temp file, behind."""
+
+    def bad_fsync(fd):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(rep.os, "fsync", bad_fsync)
+
+    with pytest.raises(OSError):
+        rep.write_custody(tmp_path, "20260101T000000Z", {"n": 1})
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_collect_outputs_tags_removed_baseline_file_as_removed(tmp_path):
+    (tmp_path / "01_extract").mkdir()
+    gone = tmp_path / "01_extract" / "gone.mbox"
+    gone.write_bytes(b"data")
+    baseline = rep.snapshot_outputs(tmp_path)
+    gone.unlink()
+
+    outputs = rep.collect_outputs(tmp_path, baseline)
+
+    entry = next(o for o in outputs if o["path"] == "01_extract/gone.mbox")
+    assert entry["origin"] == "removed"
+    assert entry["size"] is None
+    assert entry["sha256"] is None
+
+
+def test_collect_outputs_without_a_baseline_tags_every_output_unknown(tmp_path):
+    """When the run was cut short before the snapshot, no output may be claimed as new."""
+    (tmp_path / "01_extract").mkdir()
+    (tmp_path / "01_extract" / "a.mbox").write_bytes(b"x")
+    outputs = rep.collect_outputs(tmp_path, None)
+    assert [(o["path"], o["origin"]) for o in outputs] == [("01_extract/a.mbox", "unknown")]
