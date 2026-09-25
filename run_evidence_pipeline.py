@@ -27,11 +27,21 @@ Inputs  : --mbox-file PATH [PATH ...]   source archives
           --output-dir DIR              where the case folder goes
           --skip STAGE [STAGE ...]      stages to leave out
           --dry-run                     print the plan and exit
+          --no-source-hash              skip hashing the source archives (they
+                                        record path and size only, with sha256
+                                        null, when this is set)
 
 Outputs : Under <output-dir>: 01_extract, 02_stripped, 03_scan (which holds both
           the raw and the cleaned hit CSVs, since clean rewrites what scan wrote),
-          04_render, and pipeline.log. Each tool keeps its own outputs and
-          checkpoints, so a failed run resumes by re-running the same command.
+          04_render, pipeline.log, and a chain-of-custody
+          custody_<UTC stamp>.json per non-dry run. The custody record holds the
+          source archives' paths, sizes and (unless skipped) SHA-256 hashes, the
+          code commit and dirty state, argv, the python version, start/end
+          times, stages run/skipped, each stage's exit code and elapsed time,
+          overall status (complete or incomplete plus the failed stage), and a
+          path/size/SHA-256 listing of every file written to the four stage
+          folders. Each tool keeps its own outputs and checkpoints, so a failed
+          run resumes by re-running the same command.
 
 Usage   : python run_evidence_pipeline.py \\
               --mbox-file "D:\\export\\All Mail" \\
@@ -40,8 +50,12 @@ Usage   : python run_evidence_pipeline.py \\
 """
 
 import argparse
+import hashlib
+import json
+import os
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,6 +83,9 @@ def parse_args():
                         help="Title for the rendered Markdown document.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print the commands that would run, then exit.")
+    parser.add_argument("--no-source-hash", action="store_true",
+                        help="Skip hashing the source archives in the custody record "
+                             "(they can be tens of GB; hashing them takes minutes).")
     return parser.parse_args()
 
 
@@ -160,6 +177,101 @@ def preflight(plan, inputs, skipped):
     return problems
 
 
+def hash_file(path, chunk_size=1024 * 1024) -> str:
+    """Return the SHA-256 hex digest of `path`, streamed in chunks.
+
+    Never reads the file whole: sources can be tens of gigabytes.
+    """
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def get_code_version() -> dict:
+    """Return {"commit": ..., "dirty": ...} for the checkout this script lives in.
+
+    A custody record should never fail a run over its own provenance, so any
+    git problem, missing binary, or directory that is not a checkout falls back
+    to commit "unknown" and dirty None rather than raising.
+    """
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=HERE, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        status = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=HERE, capture_output=True, text=True, check=True,
+        ).stdout
+        return {"commit": commit, "dirty": bool(status.strip())}
+    except Exception:
+        return {"commit": "unknown", "dirty": None}
+
+
+def hash_sources(mbox_files, skip_hash, log) -> list:
+    """Return one record per source archive: path as given, resolved path, size, hash.
+
+    Hashing streams each file and can take minutes on a large archive, so the
+    start and finish are logged.
+    """
+    if not skip_hash:
+        log(f"hashing {len(mbox_files)} source file(s)")
+    sources = []
+    for given in mbox_files:
+        resolved = Path(given).resolve()
+        size = resolved.stat().st_size
+        sources.append({
+            "path": given,
+            "resolved": str(resolved),
+            "size": size,
+            "sha256": None if skip_hash else hash_file(resolved),
+        })
+    if not skip_hash:
+        log("source hashing complete")
+    return sources
+
+
+def collect_outputs(out_dir: Path) -> list:
+    """Return path/size/SHA-256 for every file under the four stage folders.
+
+    Excludes pipeline.log and the custody files themselves, neither of which
+    lives under a stage folder.
+    """
+    outputs = []
+    for stage_dir in ("01_extract", "02_stripped", "03_scan", "04_render"):
+        stage_path = out_dir / stage_dir
+        if not stage_path.exists():
+            continue
+        for file_path in sorted(stage_path.rglob("*")):
+            if not file_path.is_file():
+                continue
+            rel = file_path.relative_to(out_dir)
+            outputs.append({
+                "path": str(rel).replace("\\", "/"),
+                "size": file_path.stat().st_size,
+                "sha256": hash_file(file_path),
+            })
+    return outputs
+
+
+def write_custody(out_dir: Path, stamp: str, record: dict) -> Path:
+    """Write the custody record atomically: temp file in out_dir, then os.replace."""
+    fd, tmp_name = tempfile.mkstemp(dir=str(out_dir), prefix=".custody_", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(record, f, indent=2)
+            f.write("\n")
+        final_path = out_dir / f"custody_{stamp}.json"
+        os.replace(tmp_name, final_path)
+        return final_path
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
 def main():
     args = parse_args()
     out_dir = Path(args.output_dir)
@@ -187,24 +299,63 @@ def main():
         with log_path.open("a", encoding="utf-8") as f:
             f.write(f"[{stamp}] {line}\n")
 
+    start_dt = datetime.now(timezone.utc)
+    custody_stamp = start_dt.strftime("%Y%m%dT%H%M%SZ")
+
     log(f"pipeline start: {len(plan)} stage(s) -> {out_dir}")
     if args.skip:
         log(f"skipping: {', '.join(args.skip)}")
+
+    code_info = get_code_version()
+    sources = hash_sources(args.mbox_file, args.no_source_hash, log)
+
+    stage_results = []
+    failed_stage = None
+    failed_exit_code = None
 
     for stage, command in plan:
         log(f"--- {stage} ---")
         started = time.time()
         result = subprocess.run(command)
         elapsed = time.time() - started
+        stage_results.append({
+            "stage": stage,
+            "exit_code": result.returncode,
+            "elapsed_seconds": round(elapsed, 3),
+        })
         if result.returncode != 0:
             # Stop rather than feed a later stage an output that was never
             # finished. Every tool is re-runnable, so the fix is to correct the
             # cause and run the same pipeline command again.
             log(f"{stage} FAILED with exit code {result.returncode} after {elapsed:.1f}s")
-            log("pipeline stopped. Re-run this command once the cause is fixed; "
-                "completed stages resume rather than redo their work.")
-            return result.returncode
+            failed_stage = stage
+            failed_exit_code = result.returncode
+            break
         log(f"{stage} completed in {elapsed:.1f}s")
+
+    end_dt = datetime.now(timezone.utc)
+    record = {
+        "argv": sys.argv,
+        "python_version": sys.version,
+        "start": start_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "end": end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "code": code_info,
+        "source_hash_skipped": bool(args.no_source_hash),
+        "sources": sources,
+        "stages_run": [stage for stage, _ in plan],
+        "stages_skipped": list(args.skip),
+        "stage_results": stage_results,
+        "status": "incomplete" if failed_stage else "complete",
+        "failed_stage": failed_stage,
+        "failed_exit_code": failed_exit_code,
+        "outputs": collect_outputs(out_dir),
+    }
+    write_custody(out_dir, custody_stamp, record)
+
+    if failed_stage:
+        log("pipeline stopped. Re-run this command once the cause is fixed; "
+            "completed stages resume rather than redo their work.")
+        return failed_exit_code
 
     log("pipeline complete")
     log(f"outputs under {out_dir}")
