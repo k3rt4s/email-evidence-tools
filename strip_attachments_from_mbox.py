@@ -7,6 +7,9 @@ Purpose : Creates a clean, attachment-free copy of an mbox archive for faster sc
           and smaller file sizes.  For every message, any part with a Content-Disposition
           of "attachment" or a recognized filename is removed; the remaining text/inline
           parts are preserved, along with the MIME container structure around them.
+          A message that is not multipart but whose entire body is itself an attachment
+          is inventoried the same way, and its body is replaced with a one-line
+          text/plain placeholder recording the filename, size, and SHA-256 hash.
           A separate CSV inventory of all stripped attachments (filename, size, SHA-256
           hash, message metadata) is written for the record.
 
@@ -258,6 +261,25 @@ if __name__ == "__main__":
 
             if parsed.is_multipart():
                 prune_attachments(parsed, record)
+            elif is_attachment_part(parsed):
+                # A single-part message that is itself the attachment: no container to
+                # prune, so record it exactly like a pruned part, then swap its body for
+                # a placeholder rather than dropping the message from the archive.
+                record(parsed)
+                row = pending_rows[-1]
+                placeholder = (
+                    f"[attachment removed: {row['Filename'] or 'unnamed'}, "
+                    f"{row['Size']} bytes, sha256 {row['SHA256']}]\n"
+                )
+                if "Content-Disposition" in parsed:
+                    del parsed["Content-Disposition"]
+                if "Content-Transfer-Encoding" in parsed:
+                    del parsed["Content-Transfer-Encoding"]
+                if "Content-Type" in parsed:
+                    parsed.replace_header("Content-Type", 'text/plain; charset="utf-8"')
+                else:
+                    parsed["Content-Type"] = 'text/plain; charset="utf-8"'
+                parsed.set_payload(placeholder)
 
             # Serialize with minimal rewriting, then write the mbox separator + message
             buffer = BytesIO()

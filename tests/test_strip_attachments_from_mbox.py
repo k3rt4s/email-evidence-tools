@@ -1,7 +1,10 @@
 """Covers MIME-structure preservation and exact resume in strip_attachments_from_mbox.py."""
 
+import base64
 import csv
 import email
+import hashlib
+import mailbox
 import subprocess
 import sys
 from email import policy
@@ -137,3 +140,109 @@ def test_checkpoint_without_byte_lengths_restarts_instead_of_duplicating(tmp_pat
 
     assert "predates exact resume" in stdout
     assert len(read_inventory(inv)) == 1
+
+
+def single_part_attachment_message(mid="singleatt", filename="invoice.pdf", payload=b"single-attachment-bytes",
+                                    date="Fri, 09 Jan 2026 09:00:00 +0000", subject=None):
+    """A single-part message that is itself an attachment, with no multipart wrapper.
+
+    This is the shape `mbox_builder.attachment_message` does not cover: the whole
+    message body is the attachment, so there is no multipart/mixed container and no
+    separate text part.
+    """
+    encoded = base64.b64encode(payload).decode()
+    subject = subject or f"Single part attachment {mid}"
+    return f"""{mb.SEPARATOR}
+Message-ID: <{mid}@example.com>
+Date: {date}
+From: a@example.com
+To: b@example.com
+Subject: {subject}
+Content-Type: application/pdf; name="{filename}"
+Content-Disposition: attachment; filename="{filename}"
+Content-Transfer-Encoding: base64
+
+{encoded}
+"""
+
+
+def test_single_part_attachment_is_inventoried_with_decoded_size_and_hash(tmp_path):
+    """A non-multipart message whose entire body is an attachment must still be inventoried.
+
+    Size and SHA-256 must be computed over the decoded (raw) bytes, not the
+    base64-encoded bytes on the wire.
+    """
+    payload = b"single-attachment-bytes"
+    msg_text = single_part_attachment_message(payload=payload)
+    mbox = mb.write_mbox(tmp_path / "in.mbox", [msg_text])
+    out = tmp_path / "out.mbox"
+    inv = tmp_path / "inv.csv"
+    run_strip(mbox, out, inv, tmp_path / "cp.json")
+
+    rows = read_inventory(inv)
+    assert len(rows) == 1
+    assert rows[0]["Filename"] == "invoice.pdf"
+    assert rows[0]["Size"] == str(len(payload))
+    assert rows[0]["SHA256"] == hashlib.sha256(payload).hexdigest()
+
+
+def test_single_part_attachment_is_replaced_with_placeholder_and_headers_preserved(tmp_path):
+    """The stripped copy keeps the message, swapping its body for a placeholder.
+
+    It must parse as text/plain with a utf-8 charset, carry no Content-Disposition
+    header and no filename/name parameter, and its Subject/From/Date/Message-ID
+    headers must be byte-identical to the input.
+    """
+    payload = b"single-attachment-bytes"
+    msg_text = single_part_attachment_message(payload=payload, mid="singleatt2")
+    mbox = mb.write_mbox(tmp_path / "in.mbox", [msg_text])
+    out = tmp_path / "out.mbox"
+    inv = tmp_path / "inv.csv"
+    run_strip(mbox, out, inv, tmp_path / "cp.json")
+
+    rows = read_inventory(inv)
+    stripped = parse_first_message(out)
+
+    assert stripped.get_content_type() == "text/plain"
+    assert (stripped.get_content_charset() or "").lower() == "utf-8"
+    assert stripped["Content-Disposition"] is None
+    assert stripped.get_filename() is None
+    assert stripped.get_param("name") is None
+
+    expected_body = (
+        f"[attachment removed: {rows[0]['Filename']}, {rows[0]['Size']} bytes, "
+        f"sha256 {rows[0]['SHA256']}]"
+    )
+    body = stripped.get_payload(decode=True).decode("utf-8").rstrip("\n")
+    assert body == expected_body
+
+    original = email.message_from_string(msg_text.split("\n", 1)[1], policy=policy.default)
+    for header in ("Subject", "From", "Date", "Message-ID"):
+        assert stripped[header] == original[header]
+
+
+def test_single_part_attachment_message_count_matches_input(tmp_path):
+    """The stripped mbox keeps the same message count, including the replaced one."""
+    messages = [
+        single_part_attachment_message(mid="singleatt3"),
+        mb.plain_message(mid="tail2", body="No attachment here."),
+    ]
+    mbox = mb.write_mbox(tmp_path / "in.mbox", messages)
+    out = tmp_path / "out.mbox"
+    run_strip(mbox, out, tmp_path / "inv.csv", tmp_path / "cp.json")
+
+    inbox_in = mailbox.mbox(str(mbox))
+    inbox_out = mailbox.mbox(str(out))
+    assert len(list(inbox_in)) == len(list(inbox_out)) == 2
+
+
+def test_ordinary_single_part_message_passes_through_unchanged(tmp_path):
+    """A single-part message with no filename and no Content-Disposition is untouched."""
+    mbox = mb.write_mbox(tmp_path / "in.mbox", [mb.plain_message(mid="untouched", body="Just an ordinary email.")])
+    out = tmp_path / "out.mbox"
+    inv = tmp_path / "inv.csv"
+    run_strip(mbox, out, inv, tmp_path / "cp.json")
+
+    assert read_inventory(inv) == []
+    stripped = parse_first_message(out)
+    assert stripped.get_payload(decode=True).decode("utf-8").rstrip("\n") == "Just an ordinary email."
