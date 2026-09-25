@@ -2,6 +2,19 @@
 
 Notable user-facing changes to email-evidence-tools. Newest first.
 
+## 2026-09-25, public history rewritten to remove WORK_BOARD.md
+
+- Although the 2026-09-24 review found nothing sensitive in the board's history, Jon chose to rewrite
+  the public history anyway so this repo matches tectori, which did need a rewrite. `git filter-repo`
+  removed the path `WORK_BOARD.md` at every depth from every commit on `master` (the only branch, no
+  tags). Nothing else changed: the tree diff between the pre- and post-rewrite HEAD is empty. Commit
+  count on `master` dropped from 43 to 38 (5 commits that only touched the board). A verified backup
+  bundle of the pre-rewrite history is kept at
+  `<data_root>\email-evidence-tools\history_rewrite\pre_rewrite_2026-09-25.bundle`.
+- Two limits apply going forward and cannot be undone by this rewrite: any clone or fork made before
+  the force-push still holds the old history, and GitHub may keep serving old commit SHAs from cache
+  until it garbage-collects them. Purging those needs a GitHub Support request, which is Jon's call.
+
 ## 2026-09-24, work board moved off the public repo
 
 - `WORK_BOARD.md` was committed and published in this public repo, so it could name real cases and
