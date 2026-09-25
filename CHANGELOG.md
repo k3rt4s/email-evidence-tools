@@ -2,6 +2,12 @@
 
 Notable user-facing changes to email-evidence-tools. Newest first.
 
+## 2026-09-25, custody record, header scanning, single-part attachments
+
+- `run_evidence_pipeline.py` writes a chain-of-custody JSON record for every run that is not a dry run: source archive hashes (`--no-source-hash` to skip), code commit, command line, per-stage exit codes and timing, and hashed outputs tagged by origin. Failed and interrupted runs get an incomplete record; a clean run whose record could not be written exits 3.
+- `scan_mbox_for_evidence.py` also scans every From display name and the Reply-To header, with new `location` values `from_name` and `reply_to`.
+- `strip_attachments_from_mbox.py` strips and inventories a single-part message whose whole body is an attachment, leaving a one-line placeholder. It no longer crashes on a raw 8-bit Content-Disposition, in multipart messages as well.
+
 ## 2026-09-25, public history rewritten to remove WORK_BOARD.md
 
 - Although the 2026-09-24 review found nothing sensitive in the board's history, Jon chose to rewrite

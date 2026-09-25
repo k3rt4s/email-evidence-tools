@@ -9,6 +9,8 @@ What a session needs to believe before it changes anything here. Not architectur
 - The scanner normalizes once, then both matches and quotes from that same normalized text. Matching against whitespace-collapsed text while quoting from raw text silently discards every hit whose keyword crosses a line break: the term is in the body, in no sentence, and no row is written.
 - A message body is not just its first `text/plain` part. HTML-only multipart mail is ordinary, and treating a missing plain part as an empty body means the message is scanned as blank and can never produce a hit no matter what it says.
 - Attachment stripping prunes the MIME tree in place and keeps its containers. Collecting the surviving leaves and re-attaching them at the top level flattens a `multipart/alternative` into siblings, so a reader renders the plain and HTML versions one after the other and the evidence copy stops reading like the message that was sent.
+- A single-part message that is itself an attachment is inventoried and kept, its body swapped for a one-line placeholder. Only a part whose own Content-Type header declares `text/*` is exempt: compat32 reports `text/plain` for a missing or invalid Content-Type, so trusting `get_content_maintype()` would wave an undeclared PDF through uninventoried. The placeholder goes out unwrapped so its SHA-256 greps straight to the inventory row.
+- The custody record never changes the run's outcome. A failed stage returns its own exit code and an interrupt re-raises as itself even when the record cannot be written; that failure is logged instead. Source hashing is streamed and never reads a file whole, and it sits inside the protected region, so a Ctrl-C during a long hash still leaves an incomplete record.
 
 ## Load-bearing constraints
 
@@ -27,6 +29,5 @@ What a session needs to believe before it changes anything here. Not architectur
 
 ## Known soft spots
 
-- A non-multipart message that is itself an attachment passes through the stripper untouched and is never inventoried. Only multipart messages are pruned.
-- The scanner reads the message body and the `Subject` header, and each row's `location` column names which one the hit came from. It reads no other header, so a lure that lives in a display name, a `Reply-To` or a `Received` line produces no hit.
+- The scanner reads the body, the `Subject`, every From display name and the `Reply-To`. It reads no other header, so a lure in a To, Cc or Sender name or a `Received` line produces no hit. From is parsed before it is decoded, because an encoded name can decode to a comma that would split it.
 - The keyword categories are a default set tuned for security-operations triage. They are meant to be edited per case, not trusted as delivered, and a case that needs different language will silently find nothing until they are changed.
