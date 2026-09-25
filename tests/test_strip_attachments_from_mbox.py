@@ -511,3 +511,57 @@ def test_resumed_single_part_attachment_run_does_not_duplicate_the_row(tmp_path)
     assert len(read_inventory(resumed_inv)) == 1
     assert resumed_inv.read_bytes() == clean_inv.read_bytes()
     assert resumed_out.read_bytes() == clean_out.read_bytes()
+
+
+def single_part_message_with_headers(content_type_lines, mid="hdrs",
+                                     date="Tue, 13 Jan 2026 09:00:00 +0000",
+                                     payload=bytes(range(256))):
+    """A single-part base64 attachment whose Content-Type lines are given verbatim."""
+    encoded = base64.b64encode(payload).decode()
+    return f"""{mb.SEPARATOR}
+Message-ID: <{mid}@example.com>
+Date: {date}
+From: a@example.com
+To: b@example.com
+Subject: Header variants
+{content_type_lines}Content-Disposition: attachment; filename="a.pdf"
+Content-MD5: Q2hlY2sgSW50ZWdyaXR5IQ==
+Content-Transfer-Encoding: base64
+
+{encoded}
+"""
+
+
+def test_attachment_with_missing_or_invalid_content_type_is_still_stripped(tmp_path):
+    """compat32 reports text/plain for a missing or invalid Content-Type; only a declared
+    text/* type is exempt, so these attachments are still inventoried and replaced."""
+    messages = [
+        single_part_message_with_headers("", mid="missing"),
+        single_part_message_with_headers("Content-Type: application\n", mid="invalid"),
+    ]
+    mbox = mb.write_mbox(tmp_path / "in.mbox", messages)
+    out = tmp_path / "out.mbox"
+    inv = tmp_path / "inv.csv"
+    run_strip(mbox, out, inv, tmp_path / "cp.json")
+
+    rows = read_inventory(inv)
+    assert [r["Filename"] for r in rows] == ["a.pdf", "a.pdf"]
+    assert out.read_bytes().count(b"[attachment removed: a.pdf,") == 2
+
+
+def test_placeholder_is_one_unwrapped_line_that_greps_to_the_inventory_hash(tmp_path):
+    """The SHA-256 from the inventory appears whole in the raw stripped mbox, and the
+    now-false Content-MD5 and every duplicate Content-Type are gone."""
+    ct = "Content-Type: application/pdf\nContent-Type: image/png\n"
+    mbox = mb.write_mbox(tmp_path / "in.mbox", [single_part_message_with_headers(ct)])
+    out = tmp_path / "out.mbox"
+    inv = tmp_path / "inv.csv"
+    run_strip(mbox, out, inv, tmp_path / "cp.json")
+
+    rows = read_inventory(inv)
+    raw = out.read_bytes()
+    line = f"[attachment removed: a.pdf, {rows[0]['Size']} bytes, sha256 {rows[0]['SHA256']}]"
+    assert line.encode("ascii") in raw
+    stripped = parse_first_message(out)
+    assert stripped.get_all("Content-Type") == ['text/plain; charset="utf-8"']
+    assert stripped.get("Content-MD5") is None

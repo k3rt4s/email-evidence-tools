@@ -41,7 +41,7 @@ from pathlib import Path
 from email.parser import BytesParser
 from email.generator import BytesGenerator
 from email import policy
-from email.charset import Charset, QP
+from email.charset import Charset
 from io import BytesIO
 
 RETRY_DELAY    = 5    # seconds to wait when a drive I/O error occurs
@@ -114,8 +114,22 @@ def save_checkpoint(index: int, mbox_bytes: int, csv_bytes: int):
     )
 
 
+# body_encoding None sends the placeholder as 7bit or 8bit, one unwrapped line,
+# so a SHA-256 copied from the inventory greps straight to its message.
 PLACEHOLDER_CHARSET = Charset("utf-8")
-PLACEHOLDER_CHARSET.body_encoding = QP
+PLACEHOLDER_CHARSET.body_encoding = None
+
+
+def declares_text(part) -> bool:
+    """Return True when the part's own Content-Type header names a text/* type.
+
+    compat32 reports text/plain for a missing or invalid Content-Type, so
+    get_content_maintype() alone would exempt an undeclared attachment.
+    """
+    declared = part.get("Content-Type")
+    if declared is None:
+        return False
+    return str(declared).split(";", 1)[0].strip().lower().startswith("text/")
 
 
 def is_attachment_part(part) -> bool:
@@ -293,7 +307,7 @@ if __name__ == "__main__":
 
             if parsed.is_multipart():
                 prune_attachments(parsed, record)
-            elif parsed.get_content_maintype() != "text" and is_attachment_part(parsed):
+            elif not declares_text(parsed) and is_attachment_part(parsed):
                 # A single-part message that is itself the attachment: no container to
                 # prune, so record it exactly like a pruned part, then swap its body for
                 # a placeholder rather than dropping the message from the archive.
@@ -311,6 +325,8 @@ if __name__ == "__main__":
                     del parsed["Content-Disposition"]
                 if "Content-Transfer-Encoding" in parsed:
                     del parsed["Content-Transfer-Encoding"]
+                if "Content-MD5" in parsed:
+                    del parsed["Content-MD5"]
                 # Delete every Content-Type header, not just the first, so a
                 # malformed source message with duplicates does not leave a
                 # stale one behind for a downstream parser to prefer.
@@ -319,9 +335,9 @@ if __name__ == "__main__":
                 # The charset argument encodes the placeholder as utf-8 and sets a
                 # matching Content-Transfer-Encoding. Setting the payload as a bare
                 # str encodes it as ascii by default and raises UnicodeEncodeError
-                # the moment a filename in the placeholder is not ASCII. Quoted-
-                # printable, not the utf-8 default of base64, keeps the placeholder
-                # readable to anyone opening the stripped mbox as text.
+                # the moment a filename in the placeholder is not ASCII. The
+                # charset's body_encoding (see PLACEHOLDER_CHARSET) keeps the
+                # placeholder readable to anyone opening the stripped mbox as text.
                 parsed.set_payload(placeholder, PLACEHOLDER_CHARSET)
 
             # Serialize with minimal rewriting, then write the mbox separator + message
