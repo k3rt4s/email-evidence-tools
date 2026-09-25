@@ -7,7 +7,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 import mbox_builder as mb
+import run_evidence_pipeline as rep
 
 SCRIPT = Path(__file__).resolve().parent.parent / "run_evidence_pipeline.py"
 
@@ -205,3 +208,110 @@ def test_dry_run_writes_no_custody_file(tmp_path):
                  "--output-dir", str(out), "--dry-run"])
 
     assert not out.exists()
+
+
+def test_missing_source_gives_a_record_and_no_crash(tmp_path):
+    """hash_sources must not raise on a missing/unreadable source, matching the
+    extractor's own SKIP-and-continue handling of a bad --mbox-file entry."""
+    missing = tmp_path / "does_not_exist.mbox"
+
+    sources = rep.hash_sources([str(missing)], skip_hash=False, log=lambda line: None)
+
+    assert len(sources) == 1
+    assert sources[0]["sha256"] is None
+    assert sources[0]["size"] is None
+    assert sources[0]["error"] == "missing"
+
+
+def test_exception_mid_stage_still_writes_an_incomplete_record(tmp_path, monkeypatch):
+    """A crash inside a stage must still leave a custody record, then re-raise
+    with the run's ordinary (unhandled) exit behaviour unchanged."""
+    archive = case_archive(tmp_path)
+    out = tmp_path / "case"
+    argv = ["run_evidence_pipeline.py", "--mbox-file", str(archive),
+            "--address", "target@example.org", "--output-dir", str(out)]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    real_run = rep.subprocess.run
+
+    def fake_run(command, *a, **kw):
+        if any("strip_attachments_from_mbox.py" in str(part) for part in command):
+            raise OSError("simulated crash mid-stage")
+        return real_run(command, *a, **kw)
+
+    monkeypatch.setattr(rep.subprocess, "run", fake_run)
+
+    with pytest.raises(OSError):
+        rep.main()
+
+    custody_files = _custody_files(out)
+    assert len(custody_files) == 1
+    record = json.loads(custody_files[0].read_text(encoding="utf-8"))
+    assert record["status"] == "incomplete"
+    assert record["interrupted"] is not None and "OSError" in record["interrupted"]
+    assert record["stages_run"] == ["extract"]
+
+
+def test_pre_existing_and_new_outputs_are_tagged_by_origin(tmp_path):
+    archive = case_archive(tmp_path)
+    out = tmp_path / "case"
+    run_pipeline(["--mbox-file", str(archive), "--address", "target@example.org",
+                 "--output-dir", str(out)])
+
+    render_md = out / "04_render" / "target.md"
+    assert render_md.exists()
+    render_md.unlink()
+
+    run_pipeline(["--mbox-file", str(archive), "--address", "target@example.org",
+                 "--output-dir", str(out),
+                 "--skip", "extract", "strip", "scan", "clean"])
+
+    custody_files = sorted(_custody_files(out), key=lambda p: p.stat().st_mtime)
+    assert len(custody_files) == 2
+    record = json.loads(custody_files[-1].read_text(encoding="utf-8"))
+    outputs_by_path = {o["path"]: o for o in record["outputs"]}
+
+    assert outputs_by_path["04_render/target.md"]["origin"] == "new"
+    assert outputs_by_path["01_extract/target.mbox"]["origin"] == "pre-existing"
+
+
+def test_stages_run_on_failure_excludes_stages_that_never_ran(tmp_path):
+    out = tmp_path / "case"
+    (out / "01_extract").mkdir(parents=True)
+    (out / "01_extract" / "target.mbox").mkdir()
+    run_pipeline(["--mbox-file", str(case_archive(tmp_path)),
+                 "--address", "target@example.org",
+                 "--output-dir", str(out), "--skip", "extract"],
+                expect_success=False)
+
+    record = json.loads(_custody_files(out)[0].read_text(encoding="utf-8"))
+    assert record["stages_run"] == ["strip"]
+    assert "render" not in record["stages_run"]
+
+
+def test_get_code_version_falls_back_on_a_git_timeout(monkeypatch):
+    """A hung git call must not hang the pipeline: it needs a timeout, and a
+    timeout falls back to commit "unknown", dirty None like any other git failure."""
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(kwargs)
+        raise subprocess.TimeoutExpired(cmd=command, timeout=kwargs.get("timeout") or 0)
+
+    monkeypatch.setattr(rep.subprocess, "run", fake_run)
+
+    info = rep.get_code_version()
+
+    assert info == {"commit": "unknown", "dirty": None}
+    assert calls, "expected a git rev-parse attempt"
+    assert calls[0].get("timeout") is not None
+
+
+def test_write_custody_stamp_collision_gets_a_suffixed_file(tmp_path):
+    first = rep.write_custody(tmp_path, "20260101T000000Z", {"n": 1})
+    second = rep.write_custody(tmp_path, "20260101T000000Z", {"n": 2})
+
+    assert first != second
+    assert first.exists() and second.exists()
+    assert json.loads(first.read_text(encoding="utf-8"))["n"] == 1
+    assert json.loads(second.read_text(encoding="utf-8"))["n"] == 2

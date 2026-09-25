@@ -34,14 +34,20 @@ Inputs  : --mbox-file PATH [PATH ...]   source archives
 Outputs : Under <output-dir>: 01_extract, 02_stripped, 03_scan (which holds both
           the raw and the cleaned hit CSVs, since clean rewrites what scan wrote),
           04_render, pipeline.log, and a chain-of-custody
-          custody_<UTC stamp>.json per non-dry run. The custody record holds the
-          source archives' paths, sizes and (unless skipped) SHA-256 hashes, the
-          code commit and dirty state, argv, the python version, start/end
-          times, stages run/skipped, each stage's exit code and elapsed time,
-          overall status (complete or incomplete plus the failed stage), and a
-          path/size/SHA-256 listing of every file written to the four stage
-          folders. Each tool keeps its own outputs and checkpoints, so a failed
-          run resumes by re-running the same command.
+          custody_<UTC stamp>.json per non-dry run (a stamp collision gets a
+          -1, -2, ... suffix rather than overwriting an earlier run's record).
+          The custody record holds the source archives' paths, sizes and
+          (unless skipped) SHA-256 hashes, the code commit and dirty state,
+          argv, the python version, start/end times, the stages that actually
+          ran, stages skipped, each stage's exit code and elapsed time, overall
+          status (complete or incomplete plus the failed stage, and an
+          "interrupted" note if an exception or Ctrl-C cut a stage short), and
+          a path/size/SHA-256 listing of every file under the four stage
+          folders, each tagged "new", "modified", or "pre-existing" against a
+          snapshot taken before stage 1 runs, since a resumed run reuses an
+          earlier attempt's completed-stage output untouched. Each tool keeps
+          its own outputs and checkpoints, so a failed run resumes by
+          re-running the same command.
 
 Usage   : python run_evidence_pipeline.py \\
               --mbox-file "D:\\export\\All Mail" \\
@@ -177,16 +183,41 @@ def preflight(plan, inputs, skipped):
     return problems
 
 
-def hash_file(path, chunk_size=1024 * 1024) -> str:
-    """Return the SHA-256 hex digest of `path`, streamed in chunks.
+def hash_file(path, chunk_size=1024 * 1024):
+    """Return (sha256_hex_digest, bytes_hashed) for `path`, streamed in chunks.
 
-    Never reads the file whole: sources can be tens of gigabytes.
+    Never reads the file whole: sources can be tens of gigabytes. Returning the
+    byte count actually hashed lets a caller record size from the same read
+    that produced the hash, rather than from a separate stat() that can
+    disagree with it.
     """
     digest = hashlib.sha256()
+    total = 0
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(chunk_size), b""):
             digest.update(chunk)
-    return digest.hexdigest()
+            total += len(chunk)
+    return digest.hexdigest(), total
+
+
+def hash_and_stat(path: Path, skip_hash: bool) -> dict:
+    """Return {"size", "sha256", "changed_during_hash"} for a readable file.
+
+    size is the byte count actually hashed (or the pre-hash stat size when
+    hashing is skipped), never a second read that can disagree with what was
+    hashed. When hashing runs, the file is re-stat'd afterwards; a size or
+    mtime that differs from the pre-hash stat sets changed_during_hash, so a
+    file that moved under the run is never silently treated as unchanged.
+    Raises OSError if the file cannot be stat'd or opened; callers decide how
+    to record that.
+    """
+    pre = path.stat()
+    if skip_hash:
+        return {"size": pre.st_size, "sha256": None, "changed_during_hash": False}
+    sha256, bytes_hashed = hash_file(path)
+    post = path.stat()
+    changed = post.st_size != bytes_hashed or post.st_mtime_ns != pre.st_mtime_ns
+    return {"size": bytes_hashed, "sha256": sha256, "changed_during_hash": changed}
 
 
 def get_code_version() -> dict:
@@ -198,10 +229,12 @@ def get_code_version() -> dict:
     """
     try:
         commit = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=HERE, capture_output=True, text=True, check=True,
+            ["git", "rev-parse", "HEAD"], cwd=HERE, capture_output=True, text=True,
+            check=True, timeout=10,
         ).stdout.strip()
         status = subprocess.run(
-            ["git", "status", "--porcelain"], cwd=HERE, capture_output=True, text=True, check=True,
+            ["git", "status", "--porcelain"], cwd=HERE, capture_output=True, text=True,
+            check=True, timeout=10,
         ).stdout
         return {"commit": commit, "dirty": bool(status.strip())}
     except Exception:
@@ -212,63 +245,136 @@ def hash_sources(mbox_files, skip_hash, log) -> list:
     """Return one record per source archive: path as given, resolved path, size, hash.
 
     Hashing streams each file and can take minutes on a large archive, so the
-    start and finish are logged.
+    start and finish are logged. A missing or unreadable source does not stop
+    the run: its record gets sha256 null, size null, and an "error" field
+    ("missing", or the OSError text for anything else), same as the extract
+    stage's own handling of a bad --mbox-file entry, so the stage's SKIP
+    behaviour on master is unchanged.
     """
     if not skip_hash:
         log(f"hashing {len(mbox_files)} source file(s)")
     sources = []
     for given in mbox_files:
         resolved = Path(given).resolve()
-        size = resolved.stat().st_size
-        sources.append({
-            "path": given,
-            "resolved": str(resolved),
-            "size": size,
-            "sha256": None if skip_hash else hash_file(resolved),
-        })
+        entry = {"path": given, "resolved": str(resolved)}
+        try:
+            entry.update(hash_and_stat(resolved, skip_hash))
+        except OSError as exc:
+            entry["size"] = None
+            entry["sha256"] = None
+            entry["error"] = "missing" if isinstance(exc, FileNotFoundError) else str(exc)
+        sources.append(entry)
     if not skip_hash:
         log("source hashing complete")
     return sources
 
 
-def collect_outputs(out_dir: Path) -> list:
+STAGE_DIRS = ("01_extract", "02_stripped", "03_scan", "04_render")
+
+
+def snapshot_outputs(out_dir: Path) -> dict:
+    """Return {relative path: (size, mtime_ns)} for every file already under the stage folders.
+
+    Taken before stage 1 runs, so collect_outputs can tag each output against
+    this baseline afterwards. A resumed run reuses an earlier attempt's
+    completed-stage files untouched, so pre-existing is a real, expected state
+    here, not a sign something went wrong.
+    """
+    snapshot = {}
+    for stage_dir in STAGE_DIRS:
+        stage_path = out_dir / stage_dir
+        if not stage_path.exists():
+            continue
+        for file_path in stage_path.rglob("*"):
+            if not file_path.is_file():
+                continue
+            rel = str(file_path.relative_to(out_dir)).replace("\\", "/")
+            st = file_path.stat()
+            snapshot[rel] = (st.st_size, st.st_mtime_ns)
+    return snapshot
+
+
+def collect_outputs(out_dir: Path, baseline: dict) -> list:
     """Return path/size/SHA-256 for every file under the four stage folders.
 
     Excludes pipeline.log and the custody files themselves, neither of which
-    lives under a stage folder.
+    lives under a stage folder. Each entry is tagged "origin": "new" (not in
+    baseline), "modified" (in baseline but its size or mtime changed), or
+    "pre-existing" (untouched since the pre-stage-1 snapshot).
     """
     outputs = []
-    for stage_dir in ("01_extract", "02_stripped", "03_scan", "04_render"):
+    for stage_dir in STAGE_DIRS:
         stage_path = out_dir / stage_dir
         if not stage_path.exists():
             continue
         for file_path in sorted(stage_path.rglob("*")):
             if not file_path.is_file():
                 continue
-            rel = file_path.relative_to(out_dir)
-            outputs.append({
-                "path": str(rel).replace("\\", "/"),
-                "size": file_path.stat().st_size,
-                "sha256": hash_file(file_path),
-            })
+            rel = str(file_path.relative_to(out_dir)).replace("\\", "/")
+            entry = {"path": rel}
+            prior = baseline.get(rel)
+            try:
+                entry.update(hash_and_stat(file_path, skip_hash=False))
+            except OSError as exc:
+                entry["size"] = None
+                entry["sha256"] = None
+                entry["error"] = str(exc)
+                entry["origin"] = "new" if prior is None else "modified"
+                outputs.append(entry)
+                continue
+            current = (entry["size"], file_path.stat().st_mtime_ns)
+            entry["origin"] = "new" if prior is None else ("pre-existing" if prior == current else "modified")
+            outputs.append(entry)
     return outputs
 
 
+def reserve_custody_path(out_dir: Path, stamp: str) -> Path:
+    """Claim and return a custody_<stamp>[-N].json path that did not already exist.
+
+    Uses exclusive creation in a loop rather than check-then-write, so two
+    pipelines starting in the same second cannot race into overwriting each
+    other's record; the second one gets -1, the third -2, and so on.
+    """
+    candidate = out_dir / f"custody_{stamp}.json"
+    n = 0
+    while True:
+        try:
+            fd = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            n += 1
+            candidate = out_dir / f"custody_{stamp}-{n}.json"
+            continue
+        os.close(fd)
+        return candidate
+
+
 def write_custody(out_dir: Path, stamp: str, record: dict) -> Path:
-    """Write the custody record atomically: temp file in out_dir, then os.replace."""
+    """Write the custody record atomically: temp file in out_dir, then os.replace.
+
+    The final name is reserved first so a stamp collision gets a suffix
+    instead of silently overwriting an earlier run's record. The temp file is
+    fsync'd before the replace so the record cannot land truncated, and its
+    cleanup on failure runs for any BaseException, including KeyboardInterrupt,
+    not only Exception.
+    """
+    final_path = reserve_custody_path(out_dir, stamp)
     fd, tmp_name = tempfile.mkstemp(dir=str(out_dir), prefix=".custody_", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(record, f, indent=2)
             f.write("\n")
-        final_path = out_dir / f"custody_{stamp}.json"
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp_name, final_path)
         return final_path
-    except Exception:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
+    except BaseException:
+        # Remove the temp file and the empty name reserved above, so a failed
+        # write leaves no zero-byte custody file posing as a record.
+        for leftover in (tmp_name, final_path):
+            try:
+                os.unlink(leftover)
+            except OSError:
+                pass
         raise
 
 
@@ -289,7 +395,7 @@ def main():
         return 2
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    for stage_dir in ("01_extract", "02_stripped", "03_scan", "04_render"):
+    for stage_dir in STAGE_DIRS:
         (out_dir / stage_dir).mkdir(exist_ok=True)
     log_path = out_dir / "pipeline.log"
 
@@ -308,49 +414,59 @@ def main():
 
     code_info = get_code_version()
     sources = hash_sources(args.mbox_file, args.no_source_hash, log)
+    baseline = snapshot_outputs(out_dir)
 
     stage_results = []
     failed_stage = None
     failed_exit_code = None
+    interrupted = None
 
-    for stage, command in plan:
-        log(f"--- {stage} ---")
-        started = time.time()
-        result = subprocess.run(command)
-        elapsed = time.time() - started
-        stage_results.append({
-            "stage": stage,
-            "exit_code": result.returncode,
-            "elapsed_seconds": round(elapsed, 3),
-        })
-        if result.returncode != 0:
-            # Stop rather than feed a later stage an output that was never
-            # finished. Every tool is re-runnable, so the fix is to correct the
-            # cause and run the same pipeline command again.
-            log(f"{stage} FAILED with exit code {result.returncode} after {elapsed:.1f}s")
-            failed_stage = stage
-            failed_exit_code = result.returncode
-            break
-        log(f"{stage} completed in {elapsed:.1f}s")
-
-    end_dt = datetime.now(timezone.utc)
-    record = {
-        "argv": sys.argv,
-        "python_version": sys.version,
-        "start": start_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "end": end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "code": code_info,
-        "source_hash_skipped": bool(args.no_source_hash),
-        "sources": sources,
-        "stages_run": [stage for stage, _ in plan],
-        "stages_skipped": list(args.skip),
-        "stage_results": stage_results,
-        "status": "incomplete" if failed_stage else "complete",
-        "failed_stage": failed_stage,
-        "failed_exit_code": failed_exit_code,
-        "outputs": collect_outputs(out_dir),
-    }
-    write_custody(out_dir, custody_stamp, record)
+    try:
+        for stage, command in plan:
+            log(f"--- {stage} ---")
+            started = time.time()
+            result = subprocess.run(command)
+            elapsed = time.time() - started
+            stage_results.append({
+                "stage": stage,
+                "exit_code": result.returncode,
+                "elapsed_seconds": round(elapsed, 3),
+            })
+            if result.returncode != 0:
+                # Stop rather than feed a later stage an output that was never
+                # finished. Every tool is re-runnable, so the fix is to correct the
+                # cause and run the same pipeline command again.
+                log(f"{stage} FAILED with exit code {result.returncode} after {elapsed:.1f}s")
+                failed_stage = stage
+                failed_exit_code = result.returncode
+                break
+            log(f"{stage} completed in {elapsed:.1f}s")
+    except BaseException as exc:
+        # An exception or KeyboardInterrupt here still leaves a custody record
+        # rather than none at all; the finally block below writes it before
+        # this re-raises with the run's normal (unhandled) exit behaviour.
+        interrupted = f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        end_dt = datetime.now(timezone.utc)
+        record = {
+            "argv": sys.argv,
+            "python_version": sys.version,
+            "start": start_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "end": end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "code": code_info,
+            "source_hash_skipped": bool(args.no_source_hash),
+            "sources": sources,
+            "stages_run": [r["stage"] for r in stage_results],
+            "stages_skipped": list(args.skip),
+            "stage_results": stage_results,
+            "status": "incomplete" if (failed_stage or interrupted) else "complete",
+            "failed_stage": failed_stage,
+            "failed_exit_code": failed_exit_code,
+            "interrupted": interrupted,
+            "outputs": collect_outputs(out_dir, baseline),
+        }
+        write_custody(out_dir, custody_stamp, record)
 
     if failed_stage:
         log("pipeline stopped. Re-run this command once the cause is fixed; "
