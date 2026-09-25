@@ -10,8 +10,9 @@ Purpose : Parses an .mbox email archive and scans every message body for
           default keyword set targets security ops (phishing, data
           exfiltration, policy violations, incident response language) and
           should be edited per workflow.
-          Both the Subject header and the message body are scanned; the
-          `location` column on each row says which one the hit came from.
+          The Subject header, the From display name, the Reply-To header, and
+          the message body are all scanned; the `location` column on each row
+          says which one the hit came from.
           Writes one CSV row per (message, category, matched term, matching sentence).
 
 Input   : --mbox-file or MBOX_FILE
@@ -31,7 +32,7 @@ import re
 import os
 import argparse
 from email.header import decode_header, make_header
-from email.utils import parsedate_to_datetime
+from email.utils import parsedate_to_datetime, getaddresses
 from pathlib import Path
 
 from evidence_text import html_to_text
@@ -240,6 +241,40 @@ def scan_text(text, location, row_prefix, writer, split_sentences=True):
     return hits
 
 
+def scan_from_header(msg, row_prefix, writer):
+    """Scan the From header's display name(s) for evidence hits. Returns the hit count.
+
+    email.utils.getaddresses parses the raw header before decode_header_value
+    touches it, so an RFC 2047 encoded display name that decodes to text
+    containing a comma, `<`, or a quote cannot be misread as address-list
+    punctuation the way parsing the already-decoded string would. A header
+    can hold more than one address (a From with multiple senders), and each
+    parsed name is decoded and scanned on its own, in header order. If the
+    header is present but getaddresses extracts no name and no address from
+    it at all, the whole decoded header is scanned once as a fallback so an
+    unparseable From is not silently dropped; a bare address with no display
+    name never produces a row either way.
+    """
+    raw = msg.get("from", "")
+    if not raw:
+        return 0
+
+    hits = 0
+    pairs = getaddresses(msg.get_all("from", []))
+    if any(name or addr for name, addr in pairs):
+        for name, _addr in pairs:
+            decoded_name = decode_header_value(name)
+            if decoded_name:
+                hits += scan_text(decoded_name, "from_name", row_prefix, writer,
+                                  split_sentences=False)
+    else:
+        decoded_whole = decode_header_value(raw)
+        if decoded_whole:
+            hits += scan_text(decoded_whole, "from_name", row_prefix, writer,
+                              split_sentences=False)
+    return hits
+
+
 def parse_args():
     """Parse command-line arguments and environment-variable fallbacks."""
     parser = argparse.ArgumentParser(
@@ -290,22 +325,33 @@ if __name__ == "__main__":
             except Exception:
                 date = date_raw
 
-            # From and To stay as the raw header text. They are address fields
-            # that downstream steps parse, and decoding them here would rewrite
-            # the display name inside an address list for no gain: nothing
-            # matches against them.
+            # From and To stay as the raw header text in row_prefix. They are
+            # address fields that downstream steps parse, and decoding them
+            # here would rewrite the display name inside an address list for
+            # no gain: nothing matches against these columns. The From
+            # display name is still scanned separately, by scan_from_header
+            # below, which decodes and parses it for that one purpose.
             sender    = msg.get("from", "")
             recipient = msg.get("to", "")
             subject   = decode_header_value(msg.get("subject", ""))
 
             row_prefix = [date, sender, recipient, subject]
 
-            # The subject is scanned as its own source. A lure that lives
-            # entirely in the Subject header ("Urgent payment") never appears in
-            # the body, so a body-only scan reports nothing for the message that
+            # The subject, From display name, and Reply-To header are each
+            # scanned as their own source, before the body. A lure that lives
+            # entirely in one of these ("Urgent payment") never appears in the
+            # body, so a body-only scan reports nothing for the message that
             # is doing the work.
             total_hits += scan_text(subject, "subject", row_prefix, writer,
                                     split_sentences=False)
+
+            total_hits += scan_from_header(msg, row_prefix, writer)
+
+            reply_to = decode_header_value(msg.get("reply-to", ""))
+            if reply_to:
+                total_hits += scan_text(reply_to, "reply_to", row_prefix, writer,
+                                        split_sentences=False)
+
             total_hits += scan_text(get_body(msg), "body", row_prefix, writer)
 
     print(f"Done. {total_hits:,} evidence hits written to {args.output_file}")

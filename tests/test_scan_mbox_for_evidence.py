@@ -147,6 +147,129 @@ def test_unusual_text_subtypes_are_still_read():
     assert "urgent payment" in scan.get_body(msg)
 
 
+def reply_to_message(mid="replyto", subject="Nothing notable", body="Nothing notable here.",
+                     reply_to="a@example.com", date="Mon, 05 Jan 2026 09:00:00 +0000",
+                     to="b@example.com", frm="a@example.com"):
+    """A single-part text/plain message carrying a Reply-To header.
+
+    mbox_builder.plain_message has no Reply-To parameter, so this mirrors its
+    exact header format with one extra line, built here rather than editing
+    the shared builder another lane also depends on.
+    """
+    return f"""{mb.SEPARATOR}
+Message-ID: <{mid}@example.com>
+Date: {date}
+From: {frm}
+To: {to}
+Subject: {subject}
+Reply-To: {reply_to}
+Content-Type: text/plain; charset="utf-8"
+
+{body}
+"""
+
+
+def test_from_display_name_hit_is_reported(tmp_path):
+    """A lure that lives only in the From display name never appears in the body or subject."""
+    mbox = mb.write_mbox(tmp_path / "fromname.mbox", [
+        mb.plain_message(subject="Nothing notable", body="Nothing notable here.",
+                         frm='"Urgent payment needed" <a@example.com>'),
+    ])
+    rows = run_scan(mbox, tmp_path / "hits.csv")
+    matching = [r for r in rows if r["matched_term"] == "urgent payment"]
+    assert len(matching) == 1
+    assert matching[0]["location"] == "from_name"
+    assert matching[0]["exact_text"] == "Urgent payment needed"
+    assert not [r for r in rows if r["location"] in ("subject", "body")]
+
+
+def test_reply_to_hit_is_reported(tmp_path):
+    """A lure that lives only in Reply-To never appears in the body or subject."""
+    mbox = mb.write_mbox(tmp_path / "replyto.mbox", [
+        reply_to_message(reply_to="fraud@example.net, new account number pending"),
+    ])
+    rows = run_scan(mbox, tmp_path / "hits.csv")
+    matching = [r for r in rows if r["matched_term"] == "new account number"]
+    assert len(matching) == 1
+    assert matching[0]["location"] == "reply_to"
+    assert matching[0]["exact_text"] == "fraud@example.net, new account number pending"
+    assert not [r for r in rows if r["location"] in ("subject", "body")]
+
+
+def test_encoded_from_display_name_is_decoded_before_matching(tmp_path):
+    """An RFC 2047 encoded display name matches nothing while it is still base64."""
+    mbox = mb.write_mbox(tmp_path / "encodedfrom.mbox", [
+        mb.plain_message(subject="Nothing notable", body="Nothing notable here.",
+                         frm="=?utf-8?B?V2lyZSB0cmFuc2ZlciByZXF1ZXN0?= <a@example.com>"),
+    ])
+    rows = run_scan(mbox, tmp_path / "hits.csv")
+    matching = [r for r in rows if r["matched_term"] == "wire transfer request"]
+    assert len(matching) == 1
+    assert matching[0]["location"] == "from_name"
+    assert matching[0]["exact_text"] == "Wire transfer request"
+
+
+def test_bare_address_with_no_reply_to_yields_no_from_name_or_reply_to_rows(tmp_path):
+    """A bare address From with no Reply-To header must never synthesize a from_name or reply_to row."""
+    mbox = mb.write_mbox(tmp_path / "bare.mbox", [
+        mb.plain_message(subject="Urgent payment required", body="This is an urgent payment request."),
+    ])
+    rows = run_scan(mbox, tmp_path / "hits.csv")
+    assert {r["location"] for r in rows} == {"subject", "body"}
+
+
+def test_encoded_from_display_name_with_a_comma_yields_one_row(tmp_path):
+    """Decoding before parsing breaks on a comma the decoded name introduces.
+
+    The header stays a single RFC 2047 encoded-word with no literal comma
+    until it is decoded, so parsing the raw header first (then decoding each
+    parsed name) must not be tripped up by the comma the decoded text holds.
+    "New account number" is used, not "urgent payment", because "urgent
+    payment" also contains the standalone term "urgent" and would report two
+    rows instead of the one this test is checking for.
+    """
+    mbox = mb.write_mbox(tmp_path / "commaname.mbox", [
+        mb.plain_message(subject="Nothing notable", body="Nothing notable here.",
+                         frm="=?utf-8?Q?New_account_number=2C_Finance?= <a@example.com>"),
+    ])
+    rows = run_scan(mbox, tmp_path / "hits.csv")
+    matching = [r for r in rows if r["matched_term"] == "new account number"]
+    assert len(matching) == 1
+    assert matching[0]["location"] == "from_name"
+    assert matching[0]["exact_text"] == "New account number, Finance"
+
+
+def test_from_header_with_two_named_addresses_yields_two_rows(tmp_path):
+    """A From with multiple senders scans each display name separately, in order."""
+    mbox = mb.write_mbox(tmp_path / "twofrom.mbox", [
+        mb.plain_message(subject="Nothing notable", body="Nothing notable here.",
+                         frm='"New account number" <a@example.com>, "Wire transfer request" <b@example.com>'),
+    ])
+    rows = [r for r in run_scan(mbox, tmp_path / "hits.csv") if r["location"] == "from_name"]
+    assert len(rows) == 2
+    assert rows[0]["matched_term"] == "new account number"
+    assert rows[0]["exact_text"] == "New account number"
+    assert rows[1]["matched_term"] == "wire transfer request"
+    assert rows[1]["exact_text"] == "Wire transfer request"
+
+
+def test_unparseable_from_header_falls_back_to_the_whole_value(tmp_path):
+    """A From getaddresses cannot extract any name or address from still gets scanned.
+
+    ';new account number;' is non-empty but getaddresses returns [('', '')]
+    for it, so nothing about it should read as address information; the
+    fallback scans the decoded header text itself.
+    """
+    mbox = mb.write_mbox(tmp_path / "unparseable.mbox", [
+        mb.plain_message(subject="Nothing notable", body="Nothing notable here.",
+                         frm=";new account number;"),
+    ])
+    rows = [r for r in run_scan(mbox, tmp_path / "hits.csv") if r["location"] == "from_name"]
+    assert len(rows) == 1
+    assert rows[0]["matched_term"] == "new account number"
+    assert rows[0]["exact_text"] == ";new account number;"
+
+
 def test_output_defaults_beside_the_input_not_the_working_directory(tmp_path, monkeypatch):
     """A relative default writes evidence wherever the tool is run from.
 
