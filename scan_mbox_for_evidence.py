@@ -10,8 +10,9 @@ Purpose : Parses an .mbox email archive and scans every message body for
           default keyword set targets security ops (phishing, data
           exfiltration, policy violations, incident response language) and
           should be edited per workflow.
-          Both the Subject header and the message body are scanned; the
-          `location` column on each row says which one the hit came from.
+          The Subject header, the From display name, the Reply-To header, and
+          the message body are all scanned; the `location` column on each row
+          says which one the hit came from.
           Writes one CSV row per (message, category, matched term, matching sentence).
 
 Input   : --mbox-file or MBOX_FILE
@@ -31,7 +32,7 @@ import re
 import os
 import argparse
 from email.header import decode_header, make_header
-from email.utils import parsedate_to_datetime
+from email.utils import parsedate_to_datetime, parseaddr
 from pathlib import Path
 
 from evidence_text import html_to_text
@@ -300,12 +301,24 @@ if __name__ == "__main__":
 
             row_prefix = [date, sender, recipient, subject]
 
-            # The subject is scanned as its own source. A lure that lives
-            # entirely in the Subject header ("Urgent payment") never appears in
-            # the body, so a body-only scan reports nothing for the message that
+            # The subject, From display name, and Reply-To header are each
+            # scanned as their own source, before the body. A lure that lives
+            # entirely in one of these ("Urgent payment") never appears in the
+            # body, so a body-only scan reports nothing for the message that
             # is doing the work.
             total_hits += scan_text(subject, "subject", row_prefix, writer,
                                     split_sentences=False)
+
+            from_name = parseaddr(decode_header_value(msg.get("from", "")))[0]
+            if from_name:
+                total_hits += scan_text(from_name, "from_name", row_prefix, writer,
+                                        split_sentences=False)
+
+            reply_to = decode_header_value(msg.get("reply-to", ""))
+            if reply_to:
+                total_hits += scan_text(reply_to, "reply_to", row_prefix, writer,
+                                        split_sentences=False)
+
             total_hits += scan_text(get_body(msg), "body", row_prefix, writer)
 
     print(f"Done. {total_hits:,} evidence hits written to {args.output_file}")
