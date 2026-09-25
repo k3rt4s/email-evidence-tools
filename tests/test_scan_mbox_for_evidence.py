@@ -218,6 +218,58 @@ def test_bare_address_with_no_reply_to_yields_no_from_name_or_reply_to_rows(tmp_
     assert {r["location"] for r in rows} == {"subject", "body"}
 
 
+def test_encoded_from_display_name_with_a_comma_yields_one_row(tmp_path):
+    """Decoding before parsing breaks on a comma the decoded name introduces.
+
+    The header stays a single RFC 2047 encoded-word with no literal comma
+    until it is decoded, so parsing the raw header first (then decoding each
+    parsed name) must not be tripped up by the comma the decoded text holds.
+    "New account number" is used, not "urgent payment", because "urgent
+    payment" also contains the standalone term "urgent" and would report two
+    rows instead of the one this test is checking for.
+    """
+    mbox = mb.write_mbox(tmp_path / "commaname.mbox", [
+        mb.plain_message(subject="Nothing notable", body="Nothing notable here.",
+                         frm="=?utf-8?Q?New_account_number=2C_Finance?= <a@example.com>"),
+    ])
+    rows = run_scan(mbox, tmp_path / "hits.csv")
+    matching = [r for r in rows if r["matched_term"] == "new account number"]
+    assert len(matching) == 1
+    assert matching[0]["location"] == "from_name"
+    assert matching[0]["exact_text"] == "New account number, Finance"
+
+
+def test_from_header_with_two_named_addresses_yields_two_rows(tmp_path):
+    """A From with multiple senders scans each display name separately, in order."""
+    mbox = mb.write_mbox(tmp_path / "twofrom.mbox", [
+        mb.plain_message(subject="Nothing notable", body="Nothing notable here.",
+                         frm='"New account number" <a@example.com>, "Wire transfer request" <b@example.com>'),
+    ])
+    rows = [r for r in run_scan(mbox, tmp_path / "hits.csv") if r["location"] == "from_name"]
+    assert len(rows) == 2
+    assert rows[0]["matched_term"] == "new account number"
+    assert rows[0]["exact_text"] == "New account number"
+    assert rows[1]["matched_term"] == "wire transfer request"
+    assert rows[1]["exact_text"] == "Wire transfer request"
+
+
+def test_unparseable_from_header_falls_back_to_the_whole_value(tmp_path):
+    """A From getaddresses cannot extract any name or address from still gets scanned.
+
+    ';new account number;' is non-empty but getaddresses returns [('', '')]
+    for it, so nothing about it should read as address information; the
+    fallback scans the decoded header text itself.
+    """
+    mbox = mb.write_mbox(tmp_path / "unparseable.mbox", [
+        mb.plain_message(subject="Nothing notable", body="Nothing notable here.",
+                         frm=";new account number;"),
+    ])
+    rows = [r for r in run_scan(mbox, tmp_path / "hits.csv") if r["location"] == "from_name"]
+    assert len(rows) == 1
+    assert rows[0]["matched_term"] == "new account number"
+    assert rows[0]["exact_text"] == ";new account number;"
+
+
 def test_output_defaults_beside_the_input_not_the_working_directory(tmp_path, monkeypatch):
     """A relative default writes evidence wherever the tool is run from.
 
