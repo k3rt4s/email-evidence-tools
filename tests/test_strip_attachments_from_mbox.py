@@ -711,3 +711,39 @@ def test_rfc822_message_that_is_not_an_attachment_passes_through_unchanged(tmp_p
 
     assert read_inventory(inv) == []
     assert b"Original body." in out.read_bytes()
+def broken_multipart_attachment_message(mid="brokenmp", filename="report.pdf",
+                                        date="Sun, 18 Jan 2026 09:00:00 +0000"):
+    """A message declaring multipart/mixed whose body has no parts at all.
+
+    It parses to a string payload, so is_multipart() is False while the maintype
+    says multipart. There is nothing to walk, and the message itself is marked as
+    an attachment.
+    """
+    return f"""{mb.SEPARATOR}
+Message-ID: <{mid}@example.com>
+Date: {date}
+From: a@example.com
+To: b@example.com
+Subject: Broken multipart
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="NOPARTS"
+Content-Disposition: attachment; filename="{filename}"
+
+no parts here at all
+"""
+
+
+def test_multipart_declaration_without_parts_is_handled_on_the_single_part_path(tmp_path):
+    """A declared multipart with a string payload must not be walked as a container."""
+    mbox = mb.write_mbox(tmp_path / "in.mbox", [broken_multipart_attachment_message()])
+    out = tmp_path / "out.mbox"
+    inv = tmp_path / "inv.csv"
+    run_strip(mbox, out, inv, tmp_path / "cp.json")
+
+    rows = read_inventory(inv)
+    assert len(rows) == 1
+    assert rows[0]["Filename"] == "report.pdf"
+    raw = out.read_bytes()
+    assert b"no parts here at all" not in raw
+    line = f"[attachment removed: report.pdf, {rows[0]['Size']} bytes, sha256 {rows[0]['SHA256']}]"
+    assert line.encode("ascii") in raw

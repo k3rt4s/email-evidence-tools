@@ -148,7 +148,11 @@ def attachment_bytes(part) -> bytes:
     inner = part.get_payload()
     if isinstance(inner, list) and inner:
         buffer = BytesIO()
-        BytesGenerator(buffer, mangle_from_=False, policy=policy.compat32).flatten(inner[0])
+        generator = BytesGenerator(buffer, mangle_from_=False, policy=policy.compat32)
+        # message/rfc822 encapsulates exactly one message, but a malformed source can
+        # parse to more than one, and dropping the rest would understate the row.
+        for encapsulated in inner:
+            generator.flatten(encapsulated)
         return buffer.getvalue()
     return b""
 
@@ -326,7 +330,7 @@ if __name__ == "__main__":
                     "SHA256"    : sha256_bytes(payload),
                 })
 
-            if parsed.get_content_maintype() == "multipart":
+            if parsed.get_content_maintype() == "multipart" and parsed.is_multipart():
                 prune_attachments(parsed, record)
             elif not declares_text(parsed) and is_attachment_part(parsed):
                 # A message that is itself the attachment: no container to
@@ -340,6 +344,11 @@ if __name__ == "__main__":
                 # having no container to prune, so the old test sent it to
                 # prune_attachments, which recorded it and returned a discarded
                 # False, leaving the whole message in the stripped copy.
+                # is_multipart() is still required alongside it: a message that
+                # declares multipart/mixed but parses to a string payload has no
+                # children to walk, and prune_attachments would iterate its
+                # characters. Such a message belongs on this path, exactly as it
+                # did before the maintype test was added.
                 record(parsed)
                 row = pending_rows[-1]
                 safe_filename = escape_placeholder_filename(row["Filename"] or "unnamed")

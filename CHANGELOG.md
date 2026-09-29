@@ -11,6 +11,8 @@ Notable user-facing changes to email-evidence-tools. Newest first.
   message's size and hash, and a top-level one gets the same one-line placeholder as any other
   single-part attachment. The digest is taken over the message as the mailbox module hands it to
   the tool, with LF line separators; see THEORY.md.
+- A message that declares `multipart/mixed` but parses to no parts at all takes the same
+  single-part path it always did, and is not walked as a container.
 
 ## 2026-09-25, custody record, header scanning, single-part attachments
 
