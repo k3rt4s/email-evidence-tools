@@ -132,6 +132,27 @@ def declares_text(part) -> bool:
     return str(declared).split(";", 1)[0].strip().lower().startswith("text/")
 
 
+def attachment_bytes(part) -> bytes:
+    """Return the bytes this part would yield if it were saved to disk.
+
+    get_payload(decode=True) returns None for a message/rfc822 part, because its
+    payload is a list holding the encapsulated message rather than a string. Taking
+    that None as empty is how an attached .eml once landed in the inventory with
+    Size 0 and the SHA-256 of empty bytes while the message itself stayed whole in
+    the stripped copy. The encapsulated message is serialized instead, with
+    mangle_from_ off so a body line beginning "From " is hashed as it was sent.
+    """
+    payload = part.get_payload(decode=True)
+    if payload is not None:
+        return payload
+    inner = part.get_payload()
+    if isinstance(inner, list) and inner:
+        buffer = BytesIO()
+        BytesGenerator(buffer, mangle_from_=False, policy=policy.compat32).flatten(inner[0])
+        return buffer.getvalue()
+    return b""
+
+
 def is_attachment_part(part) -> bool:
     """
     Return True if this MIME part should be treated as an attachment.
@@ -294,7 +315,7 @@ if __name__ == "__main__":
             pending_rows = []
 
             def record(part, _parsed=parsed, _rows=pending_rows):
-                payload = part.get_payload(decode=True) or b""
+                payload = attachment_bytes(part)
                 _rows.append({
                     "Message-ID": _parsed.get("Message-ID"),
                     "Date"      : _parsed.get("Date"),
@@ -305,15 +326,20 @@ if __name__ == "__main__":
                     "SHA256"    : sha256_bytes(payload),
                 })
 
-            if parsed.is_multipart():
+            if parsed.get_content_maintype() == "multipart":
                 prune_attachments(parsed, record)
             elif not declares_text(parsed) and is_attachment_part(parsed):
-                # A single-part message that is itself the attachment: no container to
+                # A message that is itself the attachment: no container to
                 # prune, so record it exactly like a pruned part, then swap its body for
                 # a placeholder rather than dropping the message from the archive.
                 # A single-part text/* message with a filename param (e.g. a
                 # text/plain part someone named) is exempt and passes through
                 # untouched, exactly as it does on master.
+                # The test is the maintype rather than is_multipart(): a
+                # message/rfc822 attachment answers True to is_multipart() while
+                # having no container to prune, so the old test sent it to
+                # prune_attachments, which recorded it and returned a discarded
+                # False, leaving the whole message in the stripped copy.
                 record(parsed)
                 row = pending_rows[-1]
                 safe_filename = escape_placeholder_filename(row["Filename"] or "unnamed")

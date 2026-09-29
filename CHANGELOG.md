@@ -2,6 +2,16 @@
 
 Notable user-facing changes to email-evidence-tools. Newest first.
 
+## 2026-09-29, attached messages are inventoried and stripped
+
+- `strip_attachments_from_mbox.py` handles a `message/rfc822` attachment, the shape a mail client
+  produces when a message is forwarded as an attachment. It was inventoried with Size 0 and the
+  SHA-256 of empty bytes, and at the top level the attached message stayed whole in the stripped
+  copy, so the inventory misstated what the archive held. The row now carries the encapsulated
+  message's size and hash, and a top-level one gets the same one-line placeholder as any other
+  single-part attachment. The digest is taken over the message as the mailbox module hands it to
+  the tool, with LF line separators; see THEORY.md.
+
 ## 2026-09-25, custody record, header scanning, single-part attachments
 
 - `run_evidence_pipeline.py` writes a chain-of-custody JSON record for every run that is not a dry run: source archive hashes (`--no-source-hash` to skip), code commit, command line, per-stage exit codes and timing, and hashed outputs tagged by origin. Failed and interrupted runs get an incomplete record; a clean run whose record could not be written exits 3.

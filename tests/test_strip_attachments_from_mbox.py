@@ -565,3 +565,149 @@ def test_placeholder_is_one_unwrapped_line_that_greps_to_the_inventory_hash(tmp_
     stripped = parse_first_message(out)
     assert stripped.get_all("Content-Type") == ['text/plain; charset="utf-8"']
     assert stripped.get("Content-MD5") is None
+INNER_EML = """Message-ID: <inner@example.com>
+Date: Mon, 05 Jan 2026 09:00:00 +0000
+From: c@example.com
+To: d@example.com
+Subject: The original message
+Content-Type: text/plain; charset="utf-8"
+
+Original body.
+"""
+
+
+def rfc822_attachment_message(mid="fwd822", filename="original.eml",
+                              date="Fri, 16 Jan 2026 09:00:00 +0000"):
+    """A message whose whole body is an attached message/rfc822.
+
+    Forwarding as an attachment produces this shape. It answers True to
+    is_multipart() while having no multipart container, which is what the
+    single-part path originally missed.
+    """
+    return f"""{mb.SEPARATOR}
+Message-ID: <{mid}@example.com>
+Date: {date}
+From: a@example.com
+To: b@example.com
+Subject: Fwd: the original message
+MIME-Version: 1.0
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="{filename}"
+
+{INNER_EML}"""
+
+
+def nested_rfc822_attachment_message(mid="nested822", filename="original.eml",
+                                     date="Sat, 17 Jan 2026 09:00:00 +0000"):
+    """A multipart/mixed message with a text part and an attached message/rfc822."""
+    return f"""{mb.SEPARATOR}
+Message-ID: <{mid}@example.com>
+Date: {date}
+From: a@example.com
+To: b@example.com
+Subject: Fwd with a note
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BOUND822"
+
+--BOUND822
+Content-Type: text/plain; charset="utf-8"
+
+See the attached message.
+--BOUND822
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="{filename}"
+
+{INNER_EML}--BOUND822--
+"""
+
+
+def encapsulated_bytes(mbox_path: Path) -> bytes:
+    """The attached message's bytes as they sit in the input file.
+
+    Derived from the file rather than from the tool, so the expected hash does not
+    come from the code under test. Only valid for an archive holding one
+    top-level message/rfc822 attachment message.
+    """
+    raw = mbox_path.read_bytes()
+    crlf_blank = bytes([13, 10, 13, 10])
+    marker = crlf_blank if crlf_blank in raw else bytes([10, 10])
+    encapsulated = raw.split(marker, 1)[1]
+    # mailbox parses the archive before the tool ever sees it, so every line
+    # separator the tool can hash is already LF. The expected digest normalizes
+    # the same way; see THEORY.md on the re-serialization.
+    return encapsulated.replace(bytes([13, 10]), bytes([10]))
+
+
+def test_rfc822_attachment_is_inventoried_with_the_encapsulated_message(tmp_path):
+    """An attached message/rfc822 must be inventoried with real size and hash.
+
+    get_payload(decode=True) is None for this part, so taking it as empty wrote a
+    row claiming Size 0 and the SHA-256 of empty bytes: an inventory that
+    misstates what the archive held.
+    """
+    mbox = mb.write_mbox(tmp_path / "in.mbox", [rfc822_attachment_message()])
+    out = tmp_path / "out.mbox"
+    inv = tmp_path / "inv.csv"
+    run_strip(mbox, out, inv, tmp_path / "cp.json")
+
+    expected = encapsulated_bytes(mbox)
+    rows = read_inventory(inv)
+    assert len(rows) == 1
+    assert rows[0]["Filename"] == "original.eml"
+    assert rows[0]["Size"] == str(len(expected))
+    assert rows[0]["SHA256"] == hashlib.sha256(expected).hexdigest()
+    assert rows[0]["Size"] != "0"
+
+
+def test_rfc822_attachment_is_replaced_with_the_placeholder(tmp_path):
+    """The attached message must not survive whole in the stripped copy."""
+    mbox = mb.write_mbox(tmp_path / "in.mbox", [rfc822_attachment_message(mid="fwd822b")])
+    out = tmp_path / "out.mbox"
+    inv = tmp_path / "inv.csv"
+    run_strip(mbox, out, inv, tmp_path / "cp.json")
+
+    raw = out.read_bytes()
+    assert b"Original body." not in raw
+    assert b"<inner@example.com>" not in raw
+    rows = read_inventory(inv)
+    line = f"[attachment removed: original.eml, {rows[0]['Size']} bytes, sha256 {rows[0]['SHA256']}]"
+    assert line.encode("ascii") in raw
+
+    stripped = parse_first_message(out)
+    assert stripped.get_content_type() == "text/plain"
+    assert stripped.get("Content-Disposition") is None
+    assert stripped.get("Subject") == "Fwd: the original message"
+    assert stripped.get("Message-ID") == "<fwd822b@example.com>"
+
+
+def test_nested_rfc822_attachment_is_removed_and_inventoried(tmp_path):
+    """The same part inside a multipart/mixed keeps its text sibling and its hash."""
+    mbox = mb.write_mbox(tmp_path / "in.mbox", [nested_rfc822_attachment_message()])
+    out = tmp_path / "out.mbox"
+    inv = tmp_path / "inv.csv"
+    run_strip(mbox, out, inv, tmp_path / "cp.json")
+
+    rows = read_inventory(inv)
+    assert len(rows) == 1
+    assert rows[0]["Filename"] == "original.eml"
+    assert int(rows[0]["Size"]) > 0
+    assert rows[0]["SHA256"] != hashlib.sha256(b"").hexdigest()
+
+    raw = out.read_bytes()
+    assert b"Original body." not in raw
+    assert b"See the attached message." in raw
+    assert structure(parse_first_message(out)) == ["multipart/mixed", "text/plain"]
+
+
+def test_rfc822_message_that_is_not_an_attachment_passes_through_unchanged(tmp_path):
+    """Without an attachment disposition or filename the message is left alone."""
+    full = rfc822_attachment_message(mid="plain822")
+    text = "".join(line for line in full.splitlines(keepends=True)
+                   if not line.startswith("Content-Disposition:"))
+    mbox = mb.write_mbox(tmp_path / "in.mbox", [text])
+    out = tmp_path / "out.mbox"
+    inv = tmp_path / "inv.csv"
+    run_strip(mbox, out, inv, tmp_path / "cp.json")
+
+    assert read_inventory(inv) == []
+    assert b"Original body." in out.read_bytes()
