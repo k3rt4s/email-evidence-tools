@@ -2,6 +2,10 @@
 
 Notable user-facing changes to email-evidence-tools. Newest first.
 
+## 2026-10-04, Dependabot cooldown config
+
+- Added `.github/dependabot.yml` (pip, weekly, 7-day cooldown, grouped updates) so a freshly published release is not auto-proposed inside its first week.
+
 ## 2026-09-29, attached messages are inventoried and stripped
 
 - `strip_attachments_from_mbox.py` handles a `message/rfc822` attachment, the shape a mail client
