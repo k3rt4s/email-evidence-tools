@@ -2,6 +2,10 @@
 
 Notable user-facing changes to email-evidence-tools. Newest first.
 
+## 2026-10-07, requirements pinned to exact versions
+
+- `requirements.txt` and `requirements-dev.txt` carry exact `==` pins (python-dotenv 1.2.2, pytest 9.1.1, cryptography 50.0.0, the project venv's installed set) so `check_rules.py` SEC-02 reports no unpinned lines and a rebuild installs a known set.
+
 ## 2026-10-04, Dependabot cooldown config
 
 - Added `.github/dependabot.yml` (pip, weekly, 7-day cooldown, grouped updates) so a freshly published release is not auto-proposed inside its first week.
